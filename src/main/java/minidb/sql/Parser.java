@@ -363,11 +363,15 @@ public final class Parser {
                 next();
                 String s = t.text;
                 if (s.contains(".")) return new Ast.Literal(Double.parseDouble(s));
+                long v;
                 try {
-                    return new Ast.Literal((int) Long.parseLong(s));
+                    v = Long.parseLong(s);
                 } catch (NumberFormatException e) {
-                    return new Ast.Literal(Long.parseLong(s));
+                    throw Token.err("整数超出范围: " + s, t.pos);
                 }
+                if (v >= Integer.MIN_VALUE && v <= Integer.MAX_VALUE)
+                    return new Ast.Literal((int) v);
+                return new Ast.Literal(v);
             }
             case STRING -> {
                 next();

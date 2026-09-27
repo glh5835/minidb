@@ -54,19 +54,25 @@ public final class Database implements AutoCloseable {
         return new ArrayList<>(tables.keySet());
     }
 
+    private String findTableName(String name) {
+        for (String k : tables.keySet())
+            if (k.equalsIgnoreCase(name)) return k;
+        return null;
+    }
+
     public synchronized Table getTable(String name) {
-        TableEntry te = tables.get(name);
-        if (te == null)
+        String key = findTableName(name);
+        if (key == null)
             throw new MiniDbException(MiniDbException.Code.CATALOG, "表不存在: " + name);
-        return te.table();
+        return tables.get(key).table();
     }
 
     public synchronized boolean hasTable(String name) {
-        return tables.containsKey(name);
+        return findTableName(name) != null;
     }
 
     public synchronized Table createTable(String name, List<Column> columns) {
-        if (tables.containsKey(name))
+        if (hasTable(name))
             throw new MiniDbException(MiniDbException.Code.CATALOG, "表已存在: " + name);
         Schema schema = new Schema(name, columns);
         // 建表即分配首页：避免 DML 反复改目录
@@ -93,7 +99,8 @@ public final class Database implements AutoCloseable {
     }
 
     public synchronized void dropTable(String name) {
-        TableEntry te = tables.remove(name);
+        String key = findTableName(name);
+        TableEntry te = key == null ? null : tables.remove(key);
         if (te == null)
             throw new MiniDbException(MiniDbException.Code.CATALOG, "表不存在: " + name);
         // 先释放该表索引的 B+ 树页
@@ -115,10 +122,17 @@ public final class Database implements AutoCloseable {
     // ---------- 索引 ----------
 
     /** 建索引：对现有数据全表扫描构建 B+ 树（唯一索引），并登记到目录持久化。 */
+    private String findIndexName(String indexName) {
+        for (String k : indexes.keySet())
+            if (k.equalsIgnoreCase(indexName)) return k;
+        return null;
+    }
+
     public synchronized IndexEntry createIndex(String indexName, String tableName, String columnName) {
-        if (indexes.containsKey(indexName))
+        if (findIndexName(indexName) != null)
             throw new MiniDbException(MiniDbException.Code.CATALOG, "索引已存在: " + indexName);
-        TableEntry te = tables.get(tableName);
+        String tkey = findTableName(tableName);
+        TableEntry te = tkey == null ? null : tables.get(tkey);
         if (te == null)
             throw new MiniDbException(MiniDbException.Code.CATALOG, "表不存在: " + tableName);
         int ci = te.meta().schema().columnIndex(columnName);
@@ -149,7 +163,8 @@ public final class Database implements AutoCloseable {
     }
 
     public synchronized void dropIndex(String indexName) {
-        IndexEntry ie = indexes.remove(indexName);
+        String key = findIndexName(indexName);
+        IndexEntry ie = key == null ? null : indexes.remove(key);
         if (ie == null)
             throw new MiniDbException(MiniDbException.Code.CATALOG, "索引不存在: " + indexName);
         // 释放 B+ 树所有节点页
@@ -164,16 +179,16 @@ public final class Database implements AutoCloseable {
     }
 
     public synchronized BPlusTree getIndex(String indexName) {
-        IndexEntry ie = indexes.get(indexName);
-        if (ie == null)
+        String key = findIndexName(indexName);
+        if (key == null)
             throw new MiniDbException(MiniDbException.Code.CATALOG, "索引不存在: " + indexName);
-        return ie.tree();
+        return indexes.get(key).tree();
     }
 
     public synchronized List<IndexEntry> indexesFor(String tableName) {
         List<IndexEntry> out = new ArrayList<>();
         for (IndexEntry ie : indexes.values())
-            if (ie.tableName().equals(tableName)) out.add(ie);
+            if (ie.tableName().equalsIgnoreCase(tableName)) out.add(ie);
         return out;
     }
 

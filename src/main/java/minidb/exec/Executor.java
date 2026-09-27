@@ -296,8 +296,9 @@ public final class Executor implements Expressions.Binder {
         List<String> scope = from.scope();
         // WHERE 拆合取
         List<Ast.Expr> conjuncts = s.where() == null ? new ArrayList<>() : Expressions.flattenAnd(s.where());
-        // ON 条件分类：有 LEFT JOIN 时保留在 ON 里（不能当 WHERE 重放，否则丢未匹配扩展行）；
-        // 纯 INNER 时单表 ON 谓词可下推、跨表的做连接谓词
+        // 有 LEFT JOIN 时不做任何谓词下推（右表谓词下推会改变匹配结果，
+        // 左表/右表 WHERE 谓词一律 join 后过滤，保证语义正确）
+        // 纯 INNER 时：单表谓词（含单表 ON）下推到扫描，跨表的做连接谓词
         List<Ast.Expr> joinPreds = new ArrayList<>();
         for (Ast.Expr c : from.joinConds) {
             if (from.hasLeft) continue; // 已在 planFromInOrder 的 ON 里
@@ -305,9 +306,8 @@ public final class Executor implements Expressions.Binder {
             if (sole != null) byTable(from, sole).add(c);
             else joinPreds.add(c);
         }
-        // WHERE 分类
         for (Ast.Expr c : conjuncts) {
-            String sole = soleTable(c, from);
+            String sole = from.hasLeft ? null : soleTable(c, from);
             if (sole != null) byTable(from, sole).add(c);
             else joinPreds.add(c);
         }
@@ -427,33 +427,76 @@ public final class Executor implements Expressions.Binder {
     private record ScanChoice(ExecOp op, double rows) {}
 
     private ScanChoice chooseScan(RelInfo r) {
-        Database.IndexEntry bestIdx = null;
-        long bestFrom = 0, bestTo = 0;
-        boolean bestFromInc = true, bestToInc = true;
-        double bestRows = Double.MAX_VALUE;
-        Ast.Expr bestPred = null;
+        // 按列聚合范围谓词：同列多个 > < >= <= 合并成一段（[, ]），等值锚定上下界
+        java.util.Map<String, List<Ast.Expr>> byCol = new java.util.LinkedHashMap<>();
+        java.util.Map<String, long[]> bounds = new java.util.LinkedHashMap<>(); // [from, to]
+        java.util.Map<String, boolean[]> incs = new java.util.LinkedHashMap<>(); // [fromInc, toInc]
+        java.util.Map<String, Boolean> eq = new java.util.LinkedHashMap<>();
+        List<Ast.Expr> consumed = new ArrayList<>();
         for (Ast.Expr p : r.preds) {
             IndexRange ir = indexRangeFor(p, r);
             if (ir == null) continue;
+            boolean hasIndex = false;
+            for (Database.IndexEntry ie : db.indexesFor(r.table))
+                if (ie.meta().column().equalsIgnoreCase(ir.column)) hasIndex = true;
+            if (!hasIndex) continue;
+            List<Ast.Expr> list = byCol.computeIfAbsent(ir.column, k -> new ArrayList<>());
+            list.add(p);
+            long[] b = bounds.computeIfAbsent(ir.column, k -> new long[]{Long.MIN_VALUE, Long.MAX_VALUE});
+            boolean[] inc = incs.computeIfAbsent(ir.column, k -> new boolean[]{true, true});
+            if (ir.kind == 0) {
+                b[0] = ir.from;
+                b[1] = ir.to;
+                inc[0] = true;
+                inc[1] = true;
+                eq.put(ir.column, true);
+            } else {
+                if (ir.fromInc || ir.from > b[0] || (ir.from == b[0] && ir.fromInc)) {
+                    if (ir.from > b[0]) {
+                        b[0] = ir.from;
+                        inc[0] = ir.fromInc;
+                    } else if (ir.from == b[0] && !ir.fromInc) {
+                        inc[0] = false;
+                    }
+                }
+                if (ir.to < b[1]) {
+                    b[1] = ir.to;
+                    inc[1] = ir.toInc;
+                } else if (ir.to == b[1] && !ir.toInc) {
+                    inc[1] = false;
+                }
+                eq.putIfAbsent(ir.column, false);
+            }
+        }
+        String bestCol = null;
+        Database.IndexEntry bestIdx = null;
+        double bestRows = Double.MAX_VALUE;
+        for (var col : byCol.entrySet()) {
+            long[] b = bounds.get(col.getKey());
+            boolean[] inc = incs.get(col.getKey());
+            if (b[0] > b[1] || (b[0] == b[1] && !(inc[0] && inc[1]))) {
+                continue; // 空区间交给常规过滤
+            }
             for (Database.IndexEntry ie : db.indexesFor(r.table)) {
-                if (!ie.meta().column().equalsIgnoreCase(ir.column)) continue;
-                double est = ir.kind == 0 ? Math.max(1, r.baseRows / 100.0)
-                        : Math.max(1, r.baseRows / 3.0);
+                if (!ie.meta().column().equalsIgnoreCase(col.getKey())) continue;
+                int nBounds = col.getValue().size();
+                double est = Boolean.TRUE.equals(eq.get(col.getKey()))
+                        ? Math.max(1, r.baseRows / 100.0)
+                        : Math.max(1, r.baseRows / Math.pow(3, Math.min(2, nBounds)));
                 if (est < bestRows) {
                     bestRows = est;
                     bestIdx = ie;
-                    bestFrom = ir.from;
-                    bestFromInc = ir.fromInc;
-                    bestTo = ir.to;
-                    bestToInc = ir.toInc;
-                    bestPred = p;
+                    bestCol = col.getKey();
                 }
             }
         }
-        if (bestIdx != null && bestRows < r.baseRows * 0.5) {
-            r.preds.remove(bestPred); // 已被索引覆盖
+        if (bestCol != null && bestRows < r.baseRows * 0.5) {
+            consumed.addAll(byCol.get(bestCol));
+            r.preds.removeAll(consumed); // 已被索引覆盖
+            long[] b = bounds.get(bestCol);
+            boolean[] inc = incs.get(bestCol);
             return new ScanChoice(new IndexScanExec(r.t, r.alias, bestIdx.tree(),
-                    bestFrom, bestFromInc, bestTo, bestToInc), bestRows);
+                    b[0], inc[0], b[1], inc[1]), bestRows);
         }
         return new ScanChoice(new ScanExec(r.t, r.alias), r.baseRows);
     }

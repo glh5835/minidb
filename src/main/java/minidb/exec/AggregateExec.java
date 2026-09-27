@@ -128,8 +128,9 @@ final class GroupByExec implements ExecOp {
         if (agg.func().equals("COUNT")) return (int) s.count; // 空组 COUNT = 0
         if (!s.hasValue) return null;
         return switch (agg.func()) {
-            case "SUM" -> s.sawDouble ? s.doubleSum : s.longSum;
-            case "AVG" -> s.sawDouble ? s.doubleSum / s.count : (double) s.longSum / s.count;
+            case "SUM" -> s.sawDouble ? (Object) s.doubleSum : (Object) s.longSum;
+            case "AVG" -> s.sawDouble ? (Object) (s.doubleSum / s.count)
+                    : (Object) ((double) s.longSum / s.count);
             case "MIN" -> s.min;
             case "MAX" -> s.max;
             default -> throw new IllegalStateException();
