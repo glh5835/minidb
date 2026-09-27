@@ -137,7 +137,10 @@ public final class Lexer {
             java.util.Map.entry("double", Token.Type.DOUBLE),
             java.util.Map.entry("float", Token.Type.FLOAT),
             java.util.Map.entry("varchar", Token.Type.VARCHAR),
-            java.util.Map.entry("string", Token.Type.STRING_TYPE));
+            java.util.Map.entry("string", Token.Type.STRING_TYPE),
+            java.util.Map.entry("begin", Token.Type.BEGIN),
+            java.util.Map.entry("commit", Token.Type.COMMIT),
+            java.util.Map.entry("rollback", Token.Type.ROLLBACK));
 
     private Token ident() {
         int start = pos;

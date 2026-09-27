@@ -42,6 +42,10 @@ public final class Parser {
             case DELETE -> deleteStatement();
             case CREATE -> createStatement();
             case DROP -> dropStatement();
+            case BEGIN, COMMIT, ROLLBACK -> {
+                next();
+                yield t.type;
+            }
             default -> throw Token.err("期望语句开头（SELECT/INSERT/UPDATE/DELETE/CREATE/DROP），得到 " + t.text, t.pos);
         };
     }

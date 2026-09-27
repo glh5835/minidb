@@ -31,6 +31,8 @@ public final class StorageEngine implements AutoCloseable {
     private int pageCount;      // 分配出去的最大页号 + 1（高水位）
     private int firstBitmap;    // 位图页链表头，-1 表示还没有
     private int bitmapCount;
+    /** 系统脏页（元数据/位图）：提交时随事务页一起刷盘 */
+    private final java.util.Set<Integer> systemDirty = new java.util.LinkedHashSet<>();
 
     public StorageEngine(Path file, int bufferPages) {
         boolean isNew = !Files.exists(file);
@@ -87,6 +89,7 @@ public final class StorageEngine implements AutoCloseable {
         Bytes.putInt(d, 16, bitmapCount);
         p.setDirty(true);
         pool.unpin(META_PAGE, true);
+        systemDirty.add(META_PAGE);
     }
 
     /** 分配一个新页（位图置位），返回页号。位图页是内部页，不会作为结果返回。 */
@@ -198,6 +201,7 @@ public final class StorageEngine implements AutoCloseable {
         } finally {
             pool.unpin(bp.pageId(), true);
         }
+        systemDirty.add(bp.pageId());
     }
 
     private void markBit(int pageId, boolean on) {
@@ -232,9 +236,20 @@ public final class StorageEngine implements AutoCloseable {
         }
     }
 
+    /** 刷出系统页（元数据/位图）。事务提交时与事务数据页一起调用。 */
+    public synchronized void flushSystemPages() {
+        for (int pid : systemDirty) pool.flushPage(pid);
+        systemDirty.clear();
+    }
+
     public void flush() {
         pool.flushAll();
         disk.sync();
+    }
+
+    /** 模拟断电：跳过缓冲池刷盘直接关文件。 */
+    public void abruptClose() {
+        disk.close();
     }
 
     @Override

@@ -5,11 +5,14 @@ import minidb.common.MiniDbException;
 import minidb.common.Rid;
 import minidb.sql.Ast;
 import minidb.sql.Parser;
+import minidb.sql.Token;
 import minidb.storage.Column;
 import minidb.storage.ColumnType;
 import minidb.storage.Database;
 import minidb.storage.Schema;
 import minidb.storage.Table;
+import minidb.txn.TxnSession;
+import minidb.wal.WalLog;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -51,12 +54,70 @@ public final class Executor implements Expressions.Binder {
 
     // ---------------- 调度 ----------------
 
+    /** REPL 级活动事务（BEGIN/COMMIT/ROLLBACK 语句用） */
+    private TxnSession activeSession;
+
+    /** 单条 SQL：无显式事务时按 autoCommit（语句级事务）执行。 */
     public Result execute(String sql) {
-        return execute(Parser.parse(sql));
+        Object stmt = Parser.parse(sql);
+        if (stmt instanceof Token.Type t) {
+            if (t == Token.Type.BEGIN) {
+                if (activeSession != null && !activeSession.finished)
+                    throw new MiniDbException(MiniDbException.Code.TXN, "事务已在进行中");
+                activeSession = begin(TxnSession.Isolation.REPEATABLE_READ);
+                return message("BEGIN");
+            }
+            if (t == Token.Type.COMMIT) {
+                if (activeSession == null || activeSession.finished)
+                    throw new MiniDbException(MiniDbException.Code.TXN, "没有活动事务");
+                TxnSession s = activeSession;
+                activeSession = null;
+                commit(s);
+                return message("COMMIT");
+            }
+            if (t == Token.Type.ROLLBACK) {
+                if (activeSession == null || activeSession.finished)
+                    throw new MiniDbException(MiniDbException.Code.TXN, "没有活动事务");
+                TxnSession s = activeSession;
+                activeSession = null;
+                rollback(s);
+                return message("ROLLBACK");
+            }
+        }
+        return execute(stmt, activeSession != null && !activeSession.finished ? activeSession : null);
     }
 
     public Result execute(Object stmt) {
-        if (stmt instanceof Ast.SelectStmt s) return runSelect(s);
+        return execute(stmt, null);
+    }
+
+    /** 在指定事务中执行一条 SQL 文本。 */
+    public Result execute(String sql, TxnSession session) {
+        return execute(Parser.parse(sql), session);
+    }
+
+    /** 在指定事务中执行；session 为 null 时使用语句级 autoCommit 事务。 */
+    public Result execute(Object stmt, TxnSession session) {
+        boolean auto = session == null;
+        boolean readOnlyStmt = stmt instanceof Ast.SelectStmt;
+        TxnSession s = auto ? begin(TxnSession.Isolation.READ_COMMITTED, readOnlyStmt) : session;
+        try {
+            Result r = dispatch(stmt, s);
+            if (auto) commit(s);
+            return r;
+        } catch (RuntimeException e) {
+            if (auto) {
+                try {
+                    rollback(s);
+                } catch (RuntimeException ignored) {
+                }
+            }
+            throw e;
+        }
+    }
+
+    private Result dispatch(Object stmt, TxnSession s) {
+        if (stmt instanceof Ast.SelectStmt q) return runSelect(q, s);
         if (stmt instanceof Ast.CreateTableStmt c) return createTable(c);
         if (stmt instanceof Ast.DropTableStmt d) {
             db.dropTable(d.table());
@@ -70,11 +131,54 @@ public final class Executor implements Expressions.Binder {
             db.dropIndex(d.index());
             return message("索引 " + d.index() + " 已删除");
         }
-        if (stmt instanceof Ast.InsertStmt i) return runInsert(i);
-        if (stmt instanceof Ast.UpdateStmt u) return runUpdate(u);
-        if (stmt instanceof Ast.DeleteStmt d) return runDelete(d);
+        if (stmt instanceof Ast.InsertStmt i) return runInsert(i, s);
+        if (stmt instanceof Ast.UpdateStmt u) return runUpdate(u, s);
+        if (stmt instanceof Ast.DeleteStmt d) return runDelete(d, s);
         throw new MiniDbException(MiniDbException.Code.EXEC,
                 "不支持的语句: " + stmt.getClass().getSimpleName());
+    }
+
+    // ---------------- 事务 API ----------------
+
+    /** 开启显式事务。 */
+    public TxnSession begin(TxnSession.Isolation isolation) {
+        TxnSession s = new TxnSession(db.nextTxnId(), isolation, false,
+                db.lockManager(), db.engine().pool());
+        db.wal().append(WalLog.BEGIN, s.txnId, "", -1, -1, null, null);
+        return s;
+    }
+
+    /** autoCommit 语句会话；readOnly 时不写 BEGIN/COMMIT 日志。 */
+    private TxnSession begin(TxnSession.Isolation isolation, boolean readOnly) {
+        TxnSession s = new TxnSession(db.nextTxnId(), isolation, true,
+                db.lockManager(), db.engine().pool(), readOnly);
+        if (!readOnly) db.wal().append(WalLog.BEGIN, s.txnId, "", -1, -1, null, null);
+        return s;
+    }
+
+    /** 提交：日志 fsync → 强制刷出事务 pin 的数据页 → 写 COMMIT 日志（no-steal/force-at-commit）。 */
+    public void commit(TxnSession s) {
+        if (s.finished) return;
+        if (!s.readOnly) db.wal().sync();
+        for (int pid : s.pinnedPages) db.engine().pool().flushPage(pid);
+        db.engine().flushSystemPages();
+        if (!s.readOnly) {
+            db.wal().append(WalLog.COMMIT, s.txnId, "", -1, -1, null, null);
+            db.wal().sync();
+        }
+        db.lockManager().releaseAll(s.txnId, s.heldLocks);
+        s.unpinAll(false); // 已强制刷盘：干净的 unpin（不能再标脏）
+        s.finished = true;
+    }
+
+    /** 回滚：逆序执行 undo 动作，释放锁与页。 */
+    public void rollback(TxnSession s) {
+        if (s.finished) return;
+        for (int i = s.undoActions.size() - 1; i >= 0; i--) s.undoActions.get(i).run();
+        db.wal().append(WalLog.ABORT, s.txnId, "", -1, -1, null, null);
+        db.lockManager().releaseAll(s.txnId, s.heldLocks);
+        s.unpinAll(true); // 回滚后的页内容一致，允许脏淘汰
+        s.finished = true;
     }
 
     // ---------------- DDL ----------------
@@ -98,7 +202,7 @@ public final class Executor implements Expressions.Binder {
 
     // ---------------- DML ----------------
 
-    private Result runInsert(Ast.InsertStmt ins) {
+    private Result runInsert(Ast.InsertStmt ins, TxnSession s) {
         Table t = db.getTable(ins.table());
         Schema schema = t.schema();
         int n = schema.columns().size();
@@ -129,10 +233,44 @@ public final class Executor implements Expressions.Binder {
                 values[i] = coerce(v, schema.columns().get(i));
             }
             Rid rid = t.insert(values);
+            trackInsert(s, t, rid, values);
             maintainIndexesOnInsert(ins.table(), rid, values, schema);
             count++;
         }
         return message(count + " 行已插入");
+    }
+
+    /** 写语句的事务挂钩：行锁 + WAL + no-steal 页 pin + undo 动作。 */
+    private void trackInsert(TxnSession s, Table t, Rid rid, Object[] values) {
+        if (s == null) return;
+        String table = t.schema().tableName();
+        s.lockRow(table, rid, false);
+        s.pinPage(rid.pageId());
+        byte[] after = new minidb.storage.RowCodec(t.schema()).encode(values);
+        db.wal().append(WalLog.INSERT, s.txnId, table, rid.pageId(), rid.slot(), null, after);
+        s.undoActions.add(() -> {
+            if (rowExists(t, rid)) {
+                t.delete(rid);
+                indexDelete(table, values);
+            }
+        });
+    }
+
+    private static boolean rowExists(Table t, Rid rid) {
+        try {
+            t.get(rid);
+            return true;
+        } catch (MiniDbException e) {
+            return false;
+        }
+    }
+
+    private void indexDelete(String table, Object[] row) {
+        for (Database.IndexEntry ie : db.indexesFor(table)) {
+            int ci = db.getTable(table).schema().columnIndex(ie.meta().column());
+            long key = ((Number) row[ci]).longValue();
+            ie.tree().delete(key);
+        }
     }
 
     private static int[] identity(int n) {
@@ -195,7 +333,7 @@ public final class Executor implements Expressions.Binder {
                 "值类型与列 " + col.name() + "(" + col.type() + ") 不匹配: " + v);
     }
 
-    private Result runUpdate(Ast.UpdateStmt u) {
+    private Result runUpdate(Ast.UpdateStmt u, TxnSession s) {
         Table t = db.getTable(u.table());
         Schema schema = t.schema();
         List<String> scope = new ScanExec(t, u.table()).columns();
@@ -209,13 +347,17 @@ public final class Executor implements Expressions.Binder {
             valueNodes.add(Expressions.bind(a.value(), scope, this));
         }
         Expressions.EvalNode where = u.where() == null ? null : Expressions.bind(u.where(), scope, this);
-        // 先收集命中行再修改
+        // 先收集命中行（逐行加行锁）再修改；扫描走优化器（索引点更新只锁命中行）
         List<Rid> hits = new ArrayList<>();
-        try (ScanExec scan = new ScanExec(t, u.table())) {
-            scan.open();
+        try (ExecOp scanOp = buildScanForWrite(t, u.table(), u.where())) {
+            scanOp.open();
             Object[] r;
-            while ((r = scan.next()) != null) {
-                if (where == null || Expressions.truthy(where.eval(r))) hits.add(scan.currentRid());
+            while ((r = scanOp.next()) != null) {
+                Rid rid = ridOf(scanOp);
+                boolean fresh = s != null && s.lockRow(u.table(), rid, false);
+                boolean match = where == null || Expressions.truthy(where.eval(r));
+                if (fresh && !match) s.unlockRow(u.table(), rid); // 仅放本次新获取且未命中的锁
+                if (match) hits.add(rid);
             }
         }
         for (Rid rid : hits) {
@@ -225,36 +367,85 @@ public final class Executor implements Expressions.Binder {
                 Object v = valueNodes.get(i).eval(old);
                 updated[colIdx[i]] = coerce(v, schema.columns().get(colIdx[i]));
             }
+            if (s != null) {
+                s.pinPage(rid.pageId());
+                db.wal().append(WalLog.UPDATE, s.txnId, u.table(), rid.pageId(), rid.slot(),
+                        new minidb.storage.RowCodec(schema).encode(old),
+                        new minidb.storage.RowCodec(schema).encode(updated));
+            }
             for (Database.IndexEntry ie : db.indexesFor(u.table())) {
                 int ci = schema.columnIndex(ie.meta().column());
-                ie.tree().delete(((Number) old[ci]).longValue());
+                // 索引列值未变时不动索引（避免并发下同键删/插窗口让其他事务的索引扫描漏行）
+                if (((Number) old[ci]).longValue() != ((Number) updated[ci]).longValue()) {
+                    ie.tree().delete(((Number) old[ci]).longValue());
+                }
             }
             Rid newRid = t.update(rid, updated);
-            maintainIndexesOnInsert(u.table(), newRid, updated, schema);
+            for (Database.IndexEntry ie : db.indexesFor(u.table())) {
+                int ci = schema.columnIndex(ie.meta().column());
+                if (((Number) old[ci]).longValue() != ((Number) updated[ci]).longValue()) {
+                    ie.tree().insert(((Number) updated[ci]).longValue(), newRid);
+                }
+            }
+            if (s != null) {
+                s.pinPage(newRid.pageId());
+                s.undoActions.add(() -> {
+                    if (rowExists(t, newRid)) {
+                        Rid back = t.update(newRid, old);
+                        for (Database.IndexEntry ie : db.indexesFor(u.table())) {
+                            int ci = schema.columnIndex(ie.meta().column());
+                            ie.tree().delete(((Number) updated[ci]).longValue());
+                            ie.tree().insert(((Number) old[ci]).longValue(), back);
+                        }
+                    }
+                });
+            }
         }
         return message(hits.size() + " 行已更新");
     }
 
-    private Result runDelete(Ast.DeleteStmt d) {
+    private Result runDelete(Ast.DeleteStmt d, TxnSession s) {
         Table t = db.getTable(d.table());
         Schema schema = t.schema();
         List<String> scope = new ScanExec(t, d.table()).columns();
         Expressions.EvalNode where = d.where() == null ? null : Expressions.bind(d.where(), scope, this);
         List<Rid> hits = new ArrayList<>();
         List<Object[]> oldRows = new ArrayList<>();
-        try (ScanExec scan = new ScanExec(t, d.table())) {
-            scan.open();
+        try (ExecOp scanOp = buildScanForWrite(t, d.table(), d.where())) {
+            scanOp.open();
             Object[] r;
-            while ((r = scan.next()) != null) {
-                if (where == null || Expressions.truthy(where.eval(r))) {
-                    hits.add(scan.currentRid());
+            while ((r = scanOp.next()) != null) {
+                Rid rid = ridOf(scanOp);
+                boolean fresh = s != null && s.lockRow(d.table(), rid, false);
+                boolean match = where == null || Expressions.truthy(where.eval(r));
+                if (fresh && !match) s.unlockRow(d.table(), rid);
+                if (match) {
+                    hits.add(rid);
                     oldRows.add(r.clone());
                 }
             }
         }
         for (int i = 0; i < hits.size(); i++) {
-            maintainIndexesOnDelete(d.table(), hits.get(i), oldRows.get(i), schema);
-            t.delete(hits.get(i));
+            Rid rid = hits.get(i);
+            Object[] old = oldRows.get(i);
+            if (s != null) {
+                s.pinPage(rid.pageId());
+                db.wal().append(WalLog.DELETE, s.txnId, d.table(), rid.pageId(), rid.slot(),
+                        new minidb.storage.RowCodec(schema).encode(old), null);
+            }
+            maintainIndexesOnDelete(d.table(), rid, old, schema);
+            t.delete(rid);
+            if (s != null) {
+                s.undoActions.add(() -> {
+                    if (!rowExists(t, rid)) {
+                        t.restoreAt(rid, old);
+                        for (Database.IndexEntry ie : db.indexesFor(d.table())) {
+                            int ci = schema.columnIndex(ie.meta().column());
+                            ie.tree().insert(((Number) old[ci]).longValue(), rid);
+                        }
+                    }
+                });
+            }
         }
         return message(hits.size() + " 行已删除");
     }
@@ -277,7 +468,11 @@ public final class Executor implements Expressions.Binder {
     }
 
     public Result runSelect(Ast.SelectStmt s) {
-        ExecOp plan = planSelect(s);
+        return runSelect(s, null);
+    }
+
+    public Result runSelect(Ast.SelectStmt s, TxnSession session) {
+        ExecOp plan = planSelect(s, session);
         List<String> cols = plan.columns();
         List<Object[]> rows = new ArrayList<>();
         try {
@@ -291,6 +486,10 @@ public final class Executor implements Expressions.Binder {
     }
 
     private ExecOp planSelect(Ast.SelectStmt s) {
+        return planSelect(s, null);
+    }
+
+    private ExecOp planSelect(Ast.SelectStmt s, TxnSession session) {
         if (s.from() == null) return planNoFrom(s);
         FromInfo from = flattenFrom(s.from());
         List<String> scope = from.scope();
@@ -321,8 +520,8 @@ public final class Executor implements Expressions.Binder {
             }
         }
         ExecOp scanPlan = from.hasLeft
-                ? planFromInOrder(from, s.from())
-                : planJoinGreedy(from, joinPreds);
+                ? planFromInOrder(from, s.from(), session)
+                : planJoinGreedy(from, joinPreds, session);
         // 未被用作 JOIN ON 的谓词（引用外层列的相关谓词等）join 后过滤
         if (!joinPreds.isEmpty()) {
             scanPlan = new FilterExec(scanPlan,
@@ -425,6 +624,29 @@ public final class Executor implements Expressions.Binder {
     // ---------------- 扫描与 JOIN 计划 ----------------
 
     private record ScanChoice(ExecOp op, double rows) {}
+
+    private static Rid ridOf(ExecOp scan) {
+        if (scan instanceof ScanExec se) return se.currentRid();
+        if (scan instanceof IndexScanExec ix) return ix.currentRid();
+        throw new MiniDbException(MiniDbException.Code.EXEC, "写扫描必须提供 RID");
+    }
+
+    /** 写语句（UPDATE/DELETE）的扫描：按 WHERE 谓词复用索引选择，避免全表扫描的无谓行阻塞。 */
+    private ExecOp buildScanForWrite(Table t, String alias, Ast.Expr where) {
+        RelInfo r = new RelInfo();
+        r.table = t.schema().tableName();
+        r.alias = alias;
+        r.t = t;
+        r.baseRows = Math.max(1, t.rowCount());
+        r.cols = t.schema().columns().stream().map(c -> alias + "." + c.name()).toList();
+        r.preds = where == null ? new ArrayList<>() : Expressions.flattenAnd(where);
+        try {
+            ScanChoice sc = chooseScan(r);
+            return sc.op();
+        } catch (RuntimeException e) {
+            return new ScanExec(t, alias);
+        }
+    }
 
     private ScanChoice chooseScan(RelInfo r) {
         // 按列聚合范围谓词：同列多个 > < >= <= 合并成一段（[, ]），等值锚定上下界
@@ -589,20 +811,26 @@ public final class Executor implements Expressions.Binder {
         return ir;
     }
 
+    /** 事务读：给叶扫描包上行锁算子。 */
+    private ExecOp wrapLock(ExecOp op, RelInfo rel, TxnSession session) {
+        if (session == null || session.finished) return op;
+        return new LockExec(op, session, rel.t.schema().tableName());
+    }
+
     private ExecOp withFilter(ExecOp op, List<Ast.Expr> preds) {
         if (preds == null || preds.isEmpty()) return op;
         return new FilterExec(op, Expressions.bind(Expressions.andAll(preds), op.columns(), this));
     }
 
     /** 纯 INNER：贪心 JOIN 顺序 */
-    private ExecOp planJoinGreedy(FromInfo from, List<Ast.Expr> joinPreds) {
+    private ExecOp planJoinGreedy(FromInfo from, List<Ast.Expr> joinPreds, TxnSession session) {
         List<RelInfo> rels = from.rels;
         java.util.Map<String, ExecOp> scans = new java.util.LinkedHashMap<>();
         java.util.Map<String, Double> card = new java.util.LinkedHashMap<>();
         for (RelInfo r : rels) {
             r.preds = byTable(from, r.alias); // chooseScan 会移除被索引覆盖的谓词
             ScanChoice sc = chooseScan(r);
-            scans.put(r.alias, sc.op());
+            scans.put(r.alias, wrapLock(sc.op(), r, session));
             card.put(r.alias, sc.rows());
         }
         List<String> order = new ArrayList<>();
@@ -641,17 +869,17 @@ public final class Executor implements Expressions.Binder {
     }
 
     /** 有 LEFT JOIN：保持书写顺序 */
-    private ExecOp planFromInOrder(FromInfo from, Ast.TableRef ref) {
+    private ExecOp planFromInOrder(FromInfo from, Ast.TableRef ref, TxnSession session) {
         if (ref instanceof Ast.NamedTable nt) {
             String alias = nt.alias() != null ? nt.alias() : nt.name();
             RelInfo rel = findRel(from, alias);
             rel.preds = byTable(from, alias);
             ScanChoice sc = chooseScan(rel);
-            return withFilter(sc.op(), rel.preds);
+            return withFilter(wrapLock(sc.op(), rel, session), rel.preds);
         }
         Ast.Join j = (Ast.Join) ref;
-        ExecOp left = planFromInOrder(from, j.left());
-        ExecOp right = planFromInOrder(from, j.right());
+        ExecOp left = planFromInOrder(from, j.left(), session);
+        ExecOp right = planFromInOrder(from, j.right(), session);
         Expressions.EvalNode on = j.on() == null ? null
                 : Expressions.bind(j.on(), concat(left.columns(), right.columns()), this);
         return new NestedLoopJoinExec(left, right, j.type().equals("LEFT"), on);

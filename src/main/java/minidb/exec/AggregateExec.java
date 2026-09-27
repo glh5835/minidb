@@ -178,6 +178,7 @@ final class IndexScanExec implements ExecOp {
     private final long to;
     private final boolean toInc;
     private Iterator<Rid> rids;
+    private Rid currentRid;
 
     IndexScanExec(Table table, String alias, BPlusTree tree,
                   long from, boolean fromInc, long to, boolean toInc) {
@@ -200,12 +201,18 @@ final class IndexScanExec implements ExecOp {
         while (rids != null && rids.hasNext()) {
             Rid rid = rids.next();
             try {
+                currentRid = rid;
                 return table.get(rid);
             } catch (MiniDbException e) {
                 // 索引滞后于行删除时跳过失效 RID（防御）
             }
         }
         return null;
+    }
+
+    /** 最近一次 next() 返回行的 RID（行锁用）。 */
+    public Rid currentRid() {
+        return currentRid;
     }
 
     @Override

@@ -13,6 +13,10 @@ import java.util.Map;
 public final class Database implements AutoCloseable {
     private final StorageEngine engine;
     private final Catalog catalog;
+    private final minidb.wal.WalLog wal;
+    private final minidb.txn.LockManager lockManager = new minidb.txn.LockManager();
+    private final java.util.concurrent.atomic.AtomicLong txnCounter =
+            new java.util.concurrent.atomic.AtomicLong(1);
     private final Map<String, TableEntry> tables = new LinkedHashMap<>();
     /** 索引名 -> (所属表, 元数据, 打开的 B+ 树) */
     private final Map<String, IndexEntry> indexes = new LinkedHashMap<>();
@@ -30,6 +34,36 @@ public final class Database implements AutoCloseable {
                 indexes.put(im.name(), new IndexEntry(e.name(), im, new BPlusTree(engine, im.rootPage())));
             }
         }
+        this.wal = new minidb.wal.WalLog(walPath(file));
+        // 崩溃恢复：undo-only（协议见 Recovery 注释）
+        java.util.List<minidb.wal.WalLog.Rec> records = wal.readAll();
+        if (!records.isEmpty()) {
+            minidb.wal.Recovery.recover(this, records);
+            wal.truncate();
+            engine.flush();
+        }
+    }
+
+    private static java.nio.file.Path walPath(java.nio.file.Path dbFile) {
+        return dbFile.resolveSibling(dbFile.getFileName() + ".wal");
+    }
+
+    public minidb.wal.WalLog wal() {
+        return wal;
+    }
+
+    public minidb.txn.LockManager lockManager() {
+        return lockManager;
+    }
+
+    public long nextTxnId() {
+        return txnCounter.getAndIncrement();
+    }
+
+    /** 模拟断电：缓冲池不刷盘、日志不截断，直接关闭文件句柄。 */
+    public synchronized void crash() {
+        wal.close();
+        engine.abruptClose();
     }
 
     public static Database open(Path file) {
@@ -95,6 +129,7 @@ public final class Database implements AutoCloseable {
                 : new VarTable(engine, schema, firstPage);
         tables.put(name, new TableEntry(entry, table));
         persistCatalog();
+        engine.flush(); // DDL 直接落盘（DDL 不走事务日志）
         return table;
     }
 
@@ -214,6 +249,10 @@ public final class Database implements AutoCloseable {
 
     @Override
     public synchronized void close() {
+        // 正常关闭 = checkpoint：数据全部落盘，日志截断
+        engine.flush();
+        wal.truncate();
+        wal.close();
         engine.close();
     }
 }

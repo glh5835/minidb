@@ -142,6 +142,28 @@ public final class FixedTable extends BaseTable {
     }
 
     @Override
+    public synchronized void restoreAt(Rid rid, Object[] row) {
+        checkLiveRid(rid);
+        byte[] rec = codec.encode(row);
+        if (rec.length != recordSize)
+            throw new MiniDbException(MiniDbException.Code.RECORD, "恢复行长度不符");
+        Page p = pool.getPage(rid.pageId());
+        try {
+            if (rid.slot() >= capacity || bitGet(p.data(), rid.slot()))
+                throw new MiniDbException(MiniDbException.Code.RECORD,
+                        "恢复目标槽非空: " + rid);
+            bitSet(p.data(), rid.slot(), true);
+            short hi = TablePageHeader.numSlots(p.data());
+            if (rid.slot() >= hi) TablePageHeader.numSlots(p.data(), (short) (rid.slot() + 1));
+            System.arraycopy(rec, 0, p.data(), TablePageHeader.HDR_SIZE + rid.slot() * recordSize, recordSize);
+            p.setDirty(true);
+            rowCount++;
+        } finally {
+            pool.unpin(rid.pageId(), true);
+        }
+    }
+
+    @Override
     protected Row rowAt(Page p, int slot) {
         if (slot >= capacity || !bitGet(p.data(), slot)) return null;
         Rid rid = new Rid(p.pageId(), slot);

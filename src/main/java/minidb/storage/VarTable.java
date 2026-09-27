@@ -238,6 +238,55 @@ public final class VarTable extends BaseTable {
     }
 
     @Override
+    public synchronized void restoreAt(Rid rid, Object[] row) {
+        checkLiveRid(rid);
+        byte[] rec = codec.encode(row);
+        Page p = pool.getPage(rid.pageId());
+        try {
+            byte[] d = p.data();
+            if (rid.slot() >= TablePageHeader.numSlots(d) || slotLen(d, rid.slot()) != 0)
+                throw new MiniDbException(MiniDbException.Code.RECORD, "恢复目标槽非空: " + rid);
+            // 从空闲链摘出该槽
+            short ff = TablePageHeader.firstFree(d);
+            if (ff == rid.slot()) {
+                TablePageHeader.firstFree(d, slotOffset(d, rid.slot()));
+            } else {
+                int prev = ff;
+                int guard = 0;
+                while (prev >= 0 && prev != rid.slot() && guard++ < 4096) {
+                    int next = slotOffset(d, prev) & 0xFFFF; // 空槽 offset 存下一空闲槽
+                    if (next == rid.slot()) {
+                        Bytes.putShort(d, slotOff(prev), TablePageHeader.firstFree(d) == rid.slot()
+                                ? (short) -1 : slotOffset(d, rid.slot()));
+                        Bytes.putShort(d, slotOff(prev), (short) next);
+                        break;
+                    }
+                    prev = next;
+                }
+            }
+            // 腾空间并放置记录
+            int contig = TablePageHeader.dataStart(d) - TablePageHeader.freeLow(d);
+            if (contig < rec.length) {
+                compact(p);
+                d = p.data();
+                contig = TablePageHeader.dataStart(d) - TablePageHeader.freeLow(d);
+            }
+            if (contig < rec.length)
+                throw new MiniDbException(MiniDbException.Code.RECORD, "恢复空间不足: " + rid);
+            short newStart = (short) (TablePageHeader.dataStart(d) - rec.length);
+            System.arraycopy(rec, 0, d, newStart, rec.length);
+            TablePageHeader.dataStart(d, newStart);
+            writeSlot(d, rid.slot(), newStart, (short) rec.length);
+            TablePageHeader.totalFree(d, TablePageHeader.totalFree(d) - rec.length);
+            p.setDirty(true);
+            setFree(rid.pageId(), TablePageHeader.totalFree(d));
+            rowCount++;
+        } finally {
+            pool.unpin(rid.pageId(), true);
+        }
+    }
+
+    @Override
     protected Row rowAt(Page p, int slot) {
         byte[] d = p.data();
         if (slot >= TablePageHeader.numSlots(d)) return null;

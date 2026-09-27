@@ -18,6 +18,7 @@ public final class Token {
         EXISTS, ASC, DESC, BETWEEN, UNQUOTED_EOF,
         COUNT, SUM, AVG, MIN, MAX,
         INT, INTEGER, BIGINT, LONG, DOUBLE, FLOAT, VARCHAR, STRING_TYPE,
+        BEGIN, COMMIT, ROLLBACK,
         EOF
     }
 

@@ -24,6 +24,9 @@ public interface Table {
     /** 读取指定行；RID 不存在抛 RECORD 异常。 */
     Object[] get(Rid rid);
 
+    /** 把行精确恢复到指定空槽（WAL undo 用）；槽被占用抛 RECORD 异常。 */
+    void restoreAt(Rid rid, Object[] row);
+
     /** 全表扫描（逻辑顺序 = 页链 + 槽序）。 */
     Iterator<Row> scan();
 
