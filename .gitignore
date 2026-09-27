@@ -1,0 +1,10 @@
+target/
+tools/
+*.db
+*.minidb
+*.log
+.idea/
+*.iml
+.vscode/
+build.sh
+hs_err_pid*.log
