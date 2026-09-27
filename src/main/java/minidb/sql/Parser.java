@@ -180,6 +180,13 @@ public final class Parser {
     private Object createStatement() {
         expect(Token.Type.CREATE);
         if (accept(Token.Type.TABLE)) {
+            boolean ifNotExists = false;
+            if (peek().is(Token.Type.IF)) {
+                next();
+                expect(Token.Type.NOT);
+                expect(Token.Type.EXISTS);
+                ifNotExists = true;
+            }
             String table = identifier();
             expect(Token.Type.LPAREN);
             List<Ast.ColumnDef> cols = new ArrayList<>();
@@ -192,13 +199,13 @@ public final class Parser {
                     expect(Token.Type.RPAREN);
                 }
                 cols.add(new Ast.ColumnDef(cname, type, size));
-                if (peek().is(Token.Type.PRIMARY)) { // PRIMARY KEY：记录位置用不上，仅接受
+                if (peek().is(Token.Type.PRIMARY)) {
                     next();
                     expect(Token.Type.KEY);
                 }
             } while (accept(Token.Type.COMMA));
             expect(Token.Type.RPAREN);
-            return new Ast.CreateTableStmt(table, cols);
+            return new Ast.CreateTableStmt(table, cols, ifNotExists);
         }
         expect(Token.Type.INDEX);
         String index = identifier();

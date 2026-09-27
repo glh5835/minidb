@@ -1,0 +1,332 @@
+package minidb.jdbc;
+
+import minidb.common.MiniDbException;
+import minidb.exec.Executor;
+import minidb.sql.Parser;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.SQLWarning;
+import java.util.ArrayList;
+import java.util.List;
+
+/** JDBC Statement：执行静态 SQL。查询返回 ResultSet，更新返回受影响行数（消息中解析）。 */
+public final class MiniDbStatement implements java.sql.Statement {
+    private final MiniDbConnection conn;
+    private MiniDbResultSet currentResultSet;
+    private long updateCount = -1;
+    private boolean closed;
+    private boolean poolable = false;
+
+    MiniDbStatement(MiniDbConnection conn) {
+        this.conn = conn;
+    }
+
+    private void ensureOpen() throws SQLException {
+        if (closed || conn.isClosed()) throw new SQLException("Statement 已关闭");
+    }
+
+    private Object parse(String sql) throws SQLException {
+        try {
+            return Parser.parse(sql);
+        } catch (MiniDbException e) {
+            throw new SQLException("SQL 语法错误: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public synchronized boolean execute(String sql) throws SQLException {
+        ensureOpen();
+        closeResult();
+        Object stmt = parse(sql);
+        try {
+            Executor.Result r = conn.executor().execute(stmt, conn.txn());
+            if (r.columns().isEmpty() && r.message() != null) {
+                // DML/DDL：从消息解析行数（"N 行已插入/更新/删除"）
+                updateCount = parseUpdateCount(r.message());
+                currentResultSet = null;
+                return false;
+            }
+            if (r.message() != null && r.columns().isEmpty()) {
+                updateCount = 0;
+                currentResultSet = null;
+                return false;
+            }
+            currentResultSet = new MiniDbResultSet(this, r);
+            updateCount = -1;
+            return true;
+        } catch (MiniDbException e) {
+            throw new SQLException(e.getMessage(), e);
+        } catch (RuntimeException e) {
+            // 存储层约束（如 NOT NULL）抛出的运行时异常也必须翻译为 SQLException
+            throw new SQLException(e.getMessage() == null ? e.toString() : e.getMessage(), e);
+        }
+    }
+
+    private static long parseUpdateCount(String message) {
+        try {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("(\\d+) 行").matcher(message);
+            if (m.find()) return Long.parseLong(m.group(1));
+        } catch (RuntimeException ignored) {
+        }
+        return 0;
+    }
+
+    @Override
+    public synchronized ResultSet executeQuery(String sql) throws SQLException {
+        if (!execute(sql)) throw new SQLException("语句不产生结果集: " + sql);
+        return currentResultSet;
+    }
+
+    @Override
+    public synchronized int executeUpdate(String sql) throws SQLException {
+        if (execute(sql)) throw new SQLException("语句产生了结果集，应使用 executeQuery");
+        return (int) updateCount;
+    }
+
+    @Override
+    public synchronized ResultSet getResultSet() {
+        return currentResultSet;
+    }
+
+    @Override
+    public synchronized int getUpdateCount() throws SQLException {
+        return (int) Math.min(Integer.MAX_VALUE, updateCount);
+    }
+
+    @Override
+    public synchronized long getLargeUpdateCount() throws SQLException {
+        return updateCount;
+    }
+
+    private void closeResult() {
+        if (currentResultSet != null) {
+            statementClosed(currentResultSet);
+            currentResultSet = null;
+        }
+        updateCount = -1;
+    }
+
+    @Override
+    public synchronized void close() throws SQLException {
+        closeResult();
+        closed = true;
+    }
+
+    void statementClosed(MiniDbResultSet rs) {
+        if (currentResultSet == rs) currentResultSet = null;
+    }
+
+    synchronized MiniDbConnection connection() {
+        return conn;
+    }
+
+    @Override
+    public synchronized boolean isClosed() {
+        return closed;
+    }
+
+    @Override
+    public int getMaxFieldSize() {
+        return 0;
+    }
+
+    @Override
+    public void setMaxFieldSize(int max) { /* 不限制 */ }
+
+    @Override
+    public int getMaxRows() {
+        return 0;
+    }
+
+    @Override
+    public void setMaxRows(int max) { /* 不限制 */ }
+
+    @Override
+    public void setEscapeProcessing(boolean enable) { /* 无转义处理 */ }
+
+    @Override
+    public int getQueryTimeout() {
+        return 0;
+    }
+
+    @Override
+    public void setQueryTimeout(int seconds) { /* 不支持超时 */ }
+
+    @Override
+    public void cancel() { /* 单机同步执行，不支持取消 */ }
+
+    @Override
+    public SQLWarning getWarnings() {
+        return null;
+    }
+
+    @Override
+    public void clearWarnings() { /* 无警告 */ }
+
+    @Override
+    public void setCursorName(String name) { /* 不支持定位更新 */ }
+
+    @Override
+    public ResultSet getGeneratedKeys() {
+        return emptyResult();
+    }
+
+    private ResultSet emptyResult() {
+        return new MiniDbResultSet(this, new Executor.Result(List.of(), new ArrayList<>(), null));
+    }
+
+    @Override
+    public int executeUpdate(String sql, int autoGeneratedKeys) throws SQLException {
+        return executeUpdate(sql);
+    }
+
+    @Override
+    public int executeUpdate(String sql, int[] columnIndexes) throws SQLException {
+        return executeUpdate(sql);
+    }
+
+    @Override
+    public int executeUpdate(String sql, String[] columnNames) throws SQLException {
+        return executeUpdate(sql);
+    }
+
+    @Override
+    public boolean execute(String sql, int autoGeneratedKeys) throws SQLException {
+        return execute(sql);
+    }
+
+    @Override
+    public boolean execute(String sql, int[] columnIndexes) throws SQLException {
+        return execute(sql);
+    }
+
+    @Override
+    public boolean execute(String sql, String[] columnNames) throws SQLException {
+        return execute(sql);
+    }
+
+    @Override
+    public int getResultSetConcurrency() {
+        return ResultSet.CONCUR_READ_ONLY;
+    }
+
+    @Override
+    public int getResultSetType() {
+        return ResultSet.TYPE_FORWARD_ONLY;
+    }
+
+    @Override
+    public void setFetchDirection(int direction) { /* 仅支持 FORWARD_ONLY */ }
+
+    @Override
+    public int getFetchDirection() {
+        return ResultSet.FETCH_FORWARD;
+    }
+
+    @Override
+    public void setFetchSize(int rows) { /* 一次性物化 */ }
+
+    @Override
+    public int getFetchSize() {
+        return 0;
+    }
+
+    @Override
+    public int getResultSetHoldability() {
+        return ResultSet.CLOSE_CURSORS_AT_COMMIT;
+    }
+
+    @Override
+    public boolean isPoolable() {
+        return poolable;
+    }
+
+    @Override
+    public void setPoolable(boolean poolable) {
+        this.poolable = poolable;
+    }
+
+    @Override
+    public void closeOnCompletion() { /* 简化：不支持 */ }
+
+    @Override
+    public boolean isCloseOnCompletion() {
+        return false;
+    }
+
+    @Override
+    public <T> T unwrap(Class<T> iface) throws SQLException {
+        if (iface.isInstance(this)) return iface.cast(this);
+        throw new SQLException("不支持 unwrap: " + iface);
+    }
+
+    @Override
+    public boolean isWrapperFor(Class<?> iface) {
+        return iface.isInstance(this);
+    }
+
+    @Override
+    public long executeLargeUpdate(String sql) throws SQLException {
+        return executeUpdate(sql);
+    }
+
+    @Override
+    public long executeLargeUpdate(String sql, int autoGeneratedKeys) throws SQLException {
+        return executeUpdate(sql);
+    }
+
+    @Override
+    public long executeLargeUpdate(String sql, int[] columnIndexes) throws SQLException {
+        return executeUpdate(sql);
+    }
+
+    @Override
+    public long executeLargeUpdate(String sql, String[] columnNames) throws SQLException {
+        return executeUpdate(sql);
+    }
+
+    @Override
+    public int[] executeBatch() {
+        return new int[0];
+    }
+
+    @Override
+    public void addBatch(String sql) { /* 无批处理语义（教学实现忽略） */ }
+
+    @Override
+    public void clearBatch() { /* 无批处理语义 */ }
+
+    @Override
+    public long[] executeLargeBatch() {
+        return new long[0];
+    }
+
+    @Override
+    public void setLargeMaxRows(long max) { /* 不限制 */ }
+
+    @Override
+    public long getLargeMaxRows() {
+        return 0;
+    }
+
+    @Override
+    public java.sql.Connection getConnection() throws SQLException {
+        ensureOpen();
+        return conn;
+    }
+
+    /** 更多结果集：MiniDB 单语句单结果，直接返回 false。 */
+    @Override
+    public boolean getMoreResults() {
+        closeResult();
+        return false;
+    }
+
+    @Override
+    public boolean getMoreResults(int current) {
+        closeResult();
+        return false;
+    }
+}

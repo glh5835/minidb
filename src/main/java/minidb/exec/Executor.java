@@ -196,6 +196,9 @@ public final class Executor implements Expressions.Binder {
             };
             cols.add(col);
         }
+        if (c.ifNotExists() && db.hasTable(c.table())) {
+            return message("表 " + c.table() + " 已存在，跳过创建");
+        }
         db.createTable(c.table(), cols);
         return message("表 " + c.table() + " 已创建");
     }

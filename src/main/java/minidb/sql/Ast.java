@@ -82,7 +82,7 @@ public final class Ast {
 
     public record ColumnDef(String name, String type, Integer size) {}
 
-    public record CreateTableStmt(String table, List<ColumnDef> columns) {}
+    public record CreateTableStmt(String table, List<ColumnDef> columns, boolean ifNotExists) {}
 
     public record DropTableStmt(String table) {}
 
