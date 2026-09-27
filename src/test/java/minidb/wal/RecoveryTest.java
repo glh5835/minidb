@@ -67,8 +67,28 @@ class RecoveryTest {
     }
 
     @Test
-    void normalClosePersistsEverything() {
+    void ddlFlushedUncommittedDmlUndoneByRecovery() {
+        // 未提交事务的脏页可借 DDL 的 engine.flush() 落盘（flushAll 无视 pin）。
+        // 断电后恢复必须靠 WAL 条件 undo 撤销——这是 WAL 真正发挥作用的场景：
+        // 若 readAll 解析不出记录（历史 bug），未提交的 555 会幸存，破坏原子性。
         Path f = dbFile();
+        Database db = Database.open(f, 64);
+        Executor ex = new Executor(db);
+        ex.execute("CREATE TABLE t (id INT, v INT)");
+        ex.execute("INSERT INTO t VALUES (1, 100)");
+        TxnSession s = ex.begin(TxnSession.Isolation.READ_COMMITTED);
+        ex.execute("UPDATE t SET v = 555 WHERE id = 1", s);
+        ex.execute("CREATE TABLE other (a INT)"); // DDL → flushAll，未提交脏页落盘
+        db.crash(); // 事务未提交即断电
+        Database db2 = Database.open(f, 64);
+        Executor ex2 = new Executor(db2);
+        assertEquals(100, ex2.execute("SELECT v FROM t WHERE id = 1").rows().get(0)[0],
+                "DDL 刷盘落下的未提交修改必须被恢复撤销");
+        db2.close();
+    }
+
+    @Test
+    void normalClosePersistsEverything() {        Path f = dbFile();
         try (Database db = Database.open(f, 64)) {
             Executor ex = new Executor(db);
             ex.execute("CREATE TABLE t (id INT, v INT)");

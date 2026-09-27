@@ -35,10 +35,6 @@ public final class Recovery {
             if (r.type() == WalLog.INSERT || r.type() == WalLog.DELETE || r.type() == WalLog.UPDATE)
                 byTxn.computeIfAbsent(r.txnId(), k -> new ArrayList<>()).add(r);
         }
-        for (WalLog.Rec r : records)
-            System.err.println("[RECOVER-SEE] lsn=" + r.lsn() + " type=" + r.type() + " txn=" + r.txnId()
-                + " table=" + r.table() + " rid=(" + r.pageId() + "," + r.slot() + ")");
-        System.err.println("[RECOVER] committed=" + committed);
         for (Long txn : byTxn.keySet()) {
             if (committed.contains(txn)) continue;
             List<WalLog.Rec> ops = byTxn.get(txn);

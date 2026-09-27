@@ -54,7 +54,7 @@ public final class WalLog implements AutoCloseable {
                     }
                     head.flip();
                     head.getLong(); // lsn
-                    int len = getInt(head, 17);
+                    int len = head.getInt(17);
                     if (len < 0) {
                         ch.position(pos);
                         ch.truncate(pos);
@@ -85,7 +85,7 @@ public final class WalLog implements AutoCloseable {
             if (ch.read(head) < HEAD) break;
             head.flip();
             long l = head.getLong();
-            int len = getInt(head, 17);
+            int len = head.getInt(17);
             if (len < 0) break;
             if (ch.position() + len > ch.size()) break;
             ch.position(ch.position() + len);
@@ -104,17 +104,12 @@ public final class WalLog implements AutoCloseable {
             if (ch.read(head) < HEAD) break;
             head.flip();
             head.getLong();
-            int len = getInt(head, 17);
+            int len = head.getInt(17);
             if (len < 0 || pos + (long) HEAD + len > ch.size()) break;
             ch.position(pos + (long) HEAD + len);
             last = pos + (long) HEAD + len;
         }
         return last;
-    }
-
-    private static int getInt(ByteBuffer b, int off) {
-        return (b.get(off) & 0xFF) | ((b.get(off + 1) & 0xFF) << 8)
-                | ((b.get(off + 2) & 0xFF) << 16) | ((b.get(off + 3) & 0xFF) << 24);
     }
 
     /** 追加一条记录（写到 OS 缓冲，未 fsync）。返回 lsn。 */
@@ -123,12 +118,12 @@ public final class WalLog implements AutoCloseable {
         if (type == UPDATE && (before == null || after == null))
             throw new MiniDbException(MiniDbException.Code.WAL, "UPDATE 日志需要 before/after 镜像");
         try {
-            int size = HEAD + payloadSize(table, before, after);
-            ByteBuffer buf = ByteBuffer.allocate(size);
+            int plen = payloadSize(table, before, after);
+            ByteBuffer buf = ByteBuffer.allocate(HEAD + plen);
             buf.putLong(lsn);
             buf.put(type);
             buf.putLong(txnId);
-            putInt(buf, 17, payloadSize(table, before, after));
+            buf.putInt(plen); // 必须顺序写入：绝对写 [17..21) 会被 writePayload 从 17 起覆盖
             writePayload(buf, table, pageId, slot, before, after);
             buf.flip();
             while (buf.hasRemaining()) ch.write(buf);
@@ -168,13 +163,6 @@ public final class WalLog implements AutoCloseable {
         }
     }
 
-    private static void putInt(ByteBuffer b, int off, int v) {
-        b.put(off, (byte) v);
-        b.put(off + 1, (byte) (v >>> 8));
-        b.put(off + 2, (byte) (v >>> 16));
-        b.put(off + 3, (byte) (v >>> 24));
-    }
-
     public void setFsyncEnabled(boolean on) {
         this.fsyncEnabled = on;
     }
@@ -203,7 +191,7 @@ public final class WalLog implements AutoCloseable {
                 long lsn = head.getLong();
                 byte type = head.get();
                 long txnId = head.getLong();
-                int len = getInt(head, 17);
+                int len = head.getInt(17);
                 if (len < 0 || pos + 17L + len > ch.size()) break;
                 ByteBuffer body = ByteBuffer.allocate(len);
                 if (ch.read(body) < len) break;
