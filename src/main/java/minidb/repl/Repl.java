@@ -27,6 +27,7 @@ public final class Repl implements AutoCloseable {
     private final PrintStream out;
     private Database db;
     private Path dbFile;
+    private minidb.exec.Executor executor;
 
     public Repl(BufferedReader in, PrintStream out) {
         this.in = in;
@@ -36,6 +37,7 @@ public final class Repl implements AutoCloseable {
     public void setDatabase(Database db) {
         this.db = db;
         this.dbFile = null;
+        this.executor = db != null ? new minidb.exec.Executor(db) : null;
     }
 
     public void run() throws IOException {
@@ -48,8 +50,34 @@ public final class Repl implements AutoCloseable {
         }
     }
 
-    /** 执行一条命令；返回 false 表示退出。 */
+    /** 执行一条命令或 SQL；返回 false 表示退出。 */
     public boolean execute(String line) {
+        if (!line.startsWith(".")) {
+            // 阶段3：直接当 SQL 执行
+            try {
+                if (executor == null)
+                    throw new MiniDbException(MiniDbException.Code.CATALOG, "未打开数据库，先 .open <file>");
+                var result = executor.execute(line);
+                if (result.message() != null) out.println(result.message());
+                if (!result.columns().isEmpty()) {
+                    out.println(String.join(" | ", result.columns()));
+                    for (Object[] row : result.rows()) {
+                        StringBuilder sb = new StringBuilder();
+                        for (int i = 0; i < row.length; i++) {
+                            if (i > 0) sb.append(" | ");
+                            sb.append(row[i] == null ? "NULL" : row[i]);
+                        }
+                        out.println(sb);
+                    }
+                    out.println("(" + result.rowCount() + " rows)");
+                }
+            } catch (MiniDbException e) {
+                out.println("ERROR: " + e.getMessage());
+            } catch (Exception e) {
+                out.println("ERROR: " + e);
+            }
+            return true;
+        }
         String[] tok = split(line);
         String cmd = tok[0].toLowerCase();
         try {
@@ -74,7 +102,7 @@ public final class Repl implements AutoCloseable {
                 case ".pages" -> cmdPages(tok);
                 case ".stats" -> cmdStats();
                 case ".flush" -> requireDb().flush();
-                default -> out.println("未知命令: " + cmd + "（输入 .help 查看帮助）");
+                default -> out.println("未知命令: " + cmd + "（输入 .help 查看帮助；其余输入按 SQL 执行）");
             }
         } catch (MiniDbException e) {
             out.println("ERROR: " + e.getMessage());
@@ -123,6 +151,7 @@ public final class Repl implements AutoCloseable {
         if (db != null) {
             db.close();
             db = null;
+            executor = null;
             out.println("数据库已关闭");
         }
     }
@@ -132,6 +161,7 @@ public final class Repl implements AutoCloseable {
         closeDb();
         dbFile = Path.of(tok[1]);
         db = Database.open(dbFile);
+        executor = new minidb.exec.Executor(db);
         out.println("已打开 " + dbFile);
     }
 
