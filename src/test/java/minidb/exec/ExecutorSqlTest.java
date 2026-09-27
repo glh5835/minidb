@@ -464,4 +464,25 @@ class ExecutorSqlTest {
         assertEquals(1, r.rowCount());
         assertArrayEquals(new Object[]{3, "hi"}, r.rows().get(0));
     }
+
+    @Test
+    void mixedJoinAndCommaCartesian() {
+        setupEmpDept();
+        // JOIN 之后再接逗号笛卡尔积（README 宣称支持的形式）
+        Executor.Result r = q("SELECT e.name, d.dname FROM emp e INNER JOIN dept d ON e.dept = d.id, dept d2 "
+                + "WHERE d2.id = 40 ORDER BY e.name LIMIT 1");
+        assertEquals(1, r.rowCount());
+        assertEquals("alice", r.rows().get(0)[0]);
+    }
+
+    @Test
+    void duplicateUnaliasedTableThrowsClearError() {
+        setupEmpDept();
+        // 同表无别名引用两次：应报"被引用多次"而不是"找不到关系 null"
+        MiniDbException e = assertThrows(MiniDbException.class,
+                () -> q("SELECT * FROM emp, emp"));
+        assertTrue(e.getMessage().contains("被引用多次"), "实际消息: " + e.getMessage());
+        // 带别名的自连接应正常
+        q("SELECT a.id FROM emp a, emp b WHERE a.id = b.id");
+    }
 }

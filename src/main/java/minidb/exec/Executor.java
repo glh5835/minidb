@@ -569,6 +569,11 @@ public final class Executor implements Expressions.Binder {
     private FromInfo flattenFrom(Ast.TableRef ref) {
         FromInfo info = new FromInfo();
         flattenFromRec(ref, info);
+        Set<String> seen = new HashSet<>();
+        for (RelInfo r : info.rels)
+            if (!seen.add(r.alias.toLowerCase()))
+                throw new MiniDbException(MiniDbException.Code.EXEC,
+                        "表 " + r.alias + " 被引用多次：自连接请使用别名（FROM t a, t b）");
         for (RelInfo r : info.rels) {
             r.baseRows = Math.max(1, r.t.rowCount());
             r.cols = r.t.schema().columns().stream()
