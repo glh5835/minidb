@@ -36,7 +36,7 @@ public final class Page {
     public int pinCount() { return pinCount; }
     public long pageLsn() { return pageLsn; }
 
-    void setDirty(boolean d) { this.dirty = d; }
+    public void setDirty(boolean d) { this.dirty = d; }
     void incPin() { pinCount++; }
     void decPin() {
         if (pinCount <= 0)
