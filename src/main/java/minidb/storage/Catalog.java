@@ -82,7 +82,9 @@ public final class Catalog {
                 int cnLen = Bytes.getShort(all, off); off += 2;
                 String colName = str(all, off, cnLen); off += cnLen;
                 int root = Bytes.getInt(all, off); off += 4;
-                idx.add(new IndexMeta(idxName, colName, root));
+                boolean strKey = all[off] == 1; off += 1;
+                idx.add(new IndexMeta(idxName, colName, root,
+                        strKey ? IndexMeta.KEY_STRING : IndexMeta.KEY_LONG));
             }
             out.add(new Entry(name, schema, firstPage, idx));
         }
@@ -146,12 +148,14 @@ public final class Catalog {
         for (IndexMeta im : e.indexes()) {
             byte[] in = im.name().getBytes(StandardCharsets.UTF_8);
             byte[] cn = im.column().getBytes(StandardCharsets.UTF_8);
-            byte[] part = new byte[2 + in.length + 2 + cn.length + 4];
+            byte[] part = new byte[2 + in.length + 2 + cn.length + 4 + 1];
             Bytes.putShort(part, 0, (short) in.length);
             System.arraycopy(in, 0, part, 2, in.length);
             Bytes.putShort(part, 2 + in.length, (short) cn.length);
             System.arraycopy(cn, 0, part, 4 + in.length, cn.length);
             Bytes.putInt(part, 4 + in.length + cn.length, im.rootPage());
+            part[8 + in.length + cn.length] =
+                    (byte) (IndexMeta.KEY_STRING.equals(im.keyType()) ? 1 : 0);
             idxParts.add(part);
             idxTotal += part.length;
         }

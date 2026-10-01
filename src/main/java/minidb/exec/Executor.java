@@ -9,6 +9,7 @@ import minidb.sql.Token;
 import minidb.storage.Column;
 import minidb.storage.ColumnType;
 import minidb.storage.Database;
+import minidb.storage.IndexKeys;
 import minidb.storage.Schema;
 import minidb.storage.Table;
 import minidb.txn.TxnSession;
@@ -271,8 +272,7 @@ public final class Executor implements Expressions.Binder {
     private void indexDelete(String table, Object[] row) {
         for (Database.IndexEntry ie : db.indexesFor(table)) {
             int ci = db.getTable(table).schema().columnIndex(ie.meta().column());
-            long key = ((Number) row[ci]).longValue();
-            ie.tree().delete(key);
+            IndexKeys.delete(ie.tree(), ie.meta().keyType(), row[ci]);
         }
     }
 
@@ -285,16 +285,14 @@ public final class Executor implements Expressions.Binder {
     private void maintainIndexesOnInsert(String table, Rid rid, Object[] values, Schema schema) {
         for (Database.IndexEntry ie : db.indexesFor(table)) {
             int ci = schema.columnIndex(ie.meta().column());
-            long key = ((Number) values[ci]).longValue();
-            ie.tree().insert(key, rid);
+            IndexKeys.insert(ie.tree(), ie.meta().keyType(), values[ci], rid);
         }
     }
 
     private void maintainIndexesOnDelete(String table, Rid rid, Object[] values, Schema schema) {
         for (Database.IndexEntry ie : db.indexesFor(table)) {
             int ci = schema.columnIndex(ie.meta().column());
-            long key = ((Number) values[ci]).longValue();
-            ie.tree().delete(key);
+            IndexKeys.delete(ie.tree(), ie.meta().keyType(), values[ci]);
         }
     }
 
@@ -379,15 +377,15 @@ public final class Executor implements Expressions.Binder {
             for (Database.IndexEntry ie : db.indexesFor(u.table())) {
                 int ci = schema.columnIndex(ie.meta().column());
                 // 索引列值未变时不动索引（避免并发下同键删/插窗口让其他事务的索引扫描漏行）
-                if (((Number) old[ci]).longValue() != ((Number) updated[ci]).longValue()) {
-                    ie.tree().delete(((Number) old[ci]).longValue());
+                if (!IndexKeys.sameValue(ie.meta().keyType(), old[ci], updated[ci])) {
+                    IndexKeys.delete(ie.tree(), ie.meta().keyType(), old[ci]);
                 }
             }
             Rid newRid = t.update(rid, updated);
             for (Database.IndexEntry ie : db.indexesFor(u.table())) {
                 int ci = schema.columnIndex(ie.meta().column());
-                if (((Number) old[ci]).longValue() != ((Number) updated[ci]).longValue()) {
-                    ie.tree().insert(((Number) updated[ci]).longValue(), newRid);
+                if (!IndexKeys.sameValue(ie.meta().keyType(), old[ci], updated[ci])) {
+                    IndexKeys.insert(ie.tree(), ie.meta().keyType(), updated[ci], newRid);
                 }
             }
             if (s != null) {
@@ -397,8 +395,8 @@ public final class Executor implements Expressions.Binder {
                         Rid back = t.update(newRid, old);
                         for (Database.IndexEntry ie : db.indexesFor(u.table())) {
                             int ci = schema.columnIndex(ie.meta().column());
-                            ie.tree().delete(((Number) updated[ci]).longValue());
-                            ie.tree().insert(((Number) old[ci]).longValue(), back);
+                            IndexKeys.delete(ie.tree(), ie.meta().keyType(), updated[ci]);
+                            IndexKeys.insert(ie.tree(), ie.meta().keyType(), old[ci], back);
                         }
                     }
                 });
@@ -444,7 +442,7 @@ public final class Executor implements Expressions.Binder {
                         t.restoreAt(rid, old);
                         for (Database.IndexEntry ie : db.indexesFor(d.table())) {
                             int ci = schema.columnIndex(ie.meta().column());
-                            ie.tree().insert(((Number) old[ci]).longValue(), rid);
+                            IndexKeys.insert(ie.tree(), ie.meta().keyType(), old[ci], rid);
                         }
                     }
                 });
@@ -659,7 +657,7 @@ public final class Executor implements Expressions.Binder {
     private ScanChoice chooseScan(RelInfo r) {
         // 按列聚合范围谓词：同列多个 > < >= <= 合并成一段（[, ]），等值锚定上下界
         java.util.Map<String, List<Ast.Expr>> byCol = new java.util.LinkedHashMap<>();
-        java.util.Map<String, long[]> bounds = new java.util.LinkedHashMap<>(); // [from, to]
+        java.util.Map<String, Object[]> bounds = new java.util.LinkedHashMap<>(); // [from, to]：Long 或 String（null=无界）
         java.util.Map<String, boolean[]> incs = new java.util.LinkedHashMap<>(); // [fromInc, toInc]
         java.util.Map<String, Boolean> eq = new java.util.LinkedHashMap<>();
         List<Ast.Expr> consumed = new ArrayList<>();
@@ -672,7 +670,12 @@ public final class Executor implements Expressions.Binder {
             if (!hasIndex) continue;
             List<Ast.Expr> list = byCol.computeIfAbsent(ir.column, k -> new ArrayList<>());
             list.add(p);
-            long[] b = bounds.computeIfAbsent(ir.column, k -> new long[]{Long.MIN_VALUE, Long.MAX_VALUE});
+            // 数值键哨兵 MIN/MAX；字符串键哨兵 null（无界）。首谓词决定该列的键域类型。
+            Object[] b = bounds.computeIfAbsent(ir.column, k -> new Object[]{null, null});
+            if (b[0] == null && b[1] == null && ir.from instanceof Long) {
+                b[0] = Long.MIN_VALUE;
+                b[1] = Long.MAX_VALUE;
+            }
             boolean[] inc = incs.computeIfAbsent(ir.column, k -> new boolean[]{true, true});
             if (ir.kind == 0) {
                 b[0] = ir.from;
@@ -681,19 +684,15 @@ public final class Executor implements Expressions.Binder {
                 inc[1] = true;
                 eq.put(ir.column, true);
             } else {
-                if (ir.fromInc || ir.from > b[0] || (ir.from == b[0] && ir.fromInc)) {
-                    if (ir.from > b[0]) {
-                        b[0] = ir.from;
-                        inc[0] = ir.fromInc;
-                    } else if (ir.from == b[0] && !ir.fromInc) {
-                        inc[0] = false;
-                    }
+                int cFrom = cmpBound(ir.from, b[0]);
+                if (cFrom > 0 || (cFrom == 0 && !ir.fromInc)) {
+                    b[0] = ir.from;
+                    inc[0] = ir.fromInc;
                 }
-                if (ir.to < b[1]) {
+                int cTo = cmpBound(ir.to, b[1]);
+                if (cTo < 0 || (cTo == 0 && !ir.toInc)) {
                     b[1] = ir.to;
                     inc[1] = ir.toInc;
-                } else if (ir.to == b[1] && !ir.toInc) {
-                    inc[1] = false;
                 }
                 eq.putIfAbsent(ir.column, false);
             }
@@ -702,9 +701,10 @@ public final class Executor implements Expressions.Binder {
         Database.IndexEntry bestIdx = null;
         double bestRows = Double.MAX_VALUE;
         for (var col : byCol.entrySet()) {
-            long[] b = bounds.get(col.getKey());
+            Object[] b = bounds.get(col.getKey());
             boolean[] inc = incs.get(col.getKey());
-            if (b[0] > b[1] || (b[0] == b[1] && !(inc[0] && inc[1]))) {
+            int c = cmpBound(b[0], b[1]);
+            if (c > 0 || (c == 0 && !(inc[0] && inc[1]))) {
                 continue; // 空区间交给常规过滤
             }
             for (Database.IndexEntry ie : db.indexesFor(r.table)) {
@@ -723,21 +723,40 @@ public final class Executor implements Expressions.Binder {
         if (bestCol != null && bestRows < r.baseRows * 0.5) {
             consumed.addAll(byCol.get(bestCol));
             r.preds.removeAll(consumed); // 已被索引覆盖
-            long[] b = bounds.get(bestCol);
+            Object[] b = bounds.get(bestCol);
             boolean[] inc = incs.get(bestCol);
-            return new ScanChoice(new IndexScanExec(r.t, r.alias, bestIdx.tree(),
-                    b[0], inc[0], b[1], inc[1]), bestRows);
+            ScanChoice choice;
+            if (bestIdx.meta().keyType().equals(minidb.storage.IndexMeta.KEY_STRING)) {
+                String lo = (String) b[0], hi = (String) b[1];
+                choice = new ScanChoice(new IndexScanExec(r.t, r.alias, bestIdx.tree(),
+                        lo, inc[0], hi, inc[1]), bestRows);
+            } else {
+                choice = new ScanChoice(new IndexScanExec(r.t, r.alias, bestIdx.tree(),
+                        (Long) b[0], inc[0], (Long) b[1], inc[1]), bestRows);
+            }
+            return choice;
         }
         return new ScanChoice(new ScanExec(r.t, r.alias), r.baseRows);
     }
 
     private static final class IndexRange {
         String column;
-        long from;
+        Object from;      // Long（数值键）或 String；null = 字符串无界
         boolean fromInc;
-        long to;
+        Object to;
         boolean toInc;
         int kind; // 0=等值 1=范围
+    }
+
+    /** 界比较：数值按 long；字符串按 compareTo；null 视为字符串无界端（最小/最大）。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static int cmpBound(Object a, Object b) {
+        if (a instanceof String || b instanceof String) {
+            if (a == null) return b == null ? 0 : -1;
+            if (b == null) return 1;
+            return ((Comparable) a).compareTo(b);
+        }
+        return Long.compare(((Number) a).longValue(), ((Number) b).longValue());
     }
 
     private IndexRange indexRangeFor(Ast.Expr p, RelInfo r) {
@@ -771,9 +790,20 @@ public final class Executor implements Expressions.Binder {
         } catch (MiniDbException e) {
             return null;
         }
-        if (column.type() != ColumnType.INT && column.type() != ColumnType.BIGINT) return null;
-        if (!(lit instanceof Number num)) return null;
-        long v = num.longValue();
+        boolean isStr = column.type() == ColumnType.VARCHAR;
+        Object v;
+        if (isStr) {
+            if (!(lit instanceof String str)) return null;
+            // 键超长时该值不可能在索引里（建索引已拒绝），回退全表扫描
+            if (str.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > BPlusTree.MAX_KEY_BYTES) return null;
+            v = str;
+        } else {
+            if (column.type() != ColumnType.INT && column.type() != ColumnType.BIGINT) return null;
+            if (!(lit instanceof Number num)) return null;
+            v = num.longValue();
+        }
+        Object unboundLow = isStr ? null : Long.MIN_VALUE;
+        Object unboundHigh = isStr ? null : Long.MAX_VALUE;
         IndexRange ir = new IndexRange();
         ir.column = column.name();
         switch (op) {
@@ -788,26 +818,26 @@ public final class Executor implements Expressions.Binder {
                 ir.kind = 1;
                 ir.from = v;
                 ir.fromInc = false;
-                ir.to = Long.MAX_VALUE;
+                ir.to = unboundHigh;
                 ir.toInc = true;
             }
             case ">=" -> {
                 ir.kind = 1;
                 ir.from = v;
                 ir.fromInc = true;
-                ir.to = Long.MAX_VALUE;
+                ir.to = unboundHigh;
                 ir.toInc = true;
             }
             case "<" -> {
                 ir.kind = 1;
-                ir.from = Long.MIN_VALUE;
+                ir.from = unboundLow;
                 ir.fromInc = true;
                 ir.to = v;
                 ir.toInc = false;
             }
             case "<=" -> {
                 ir.kind = 1;
-                ir.from = Long.MIN_VALUE;
+                ir.from = unboundLow;
                 ir.fromInc = true;
                 ir.to = v;
                 ir.toInc = true;

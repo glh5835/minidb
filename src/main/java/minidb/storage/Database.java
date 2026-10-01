@@ -175,19 +175,27 @@ public final class Database implements AutoCloseable {
             throw new MiniDbException(MiniDbException.Code.SCHEMA,
                     "表 " + tableName + " 没有列 " + columnName);
         Column col = te.meta().schema().columns().get(ci);
-        if (col.type() != ColumnType.INT && col.type() != ColumnType.BIGINT)
+        boolean strKey = col.type() == ColumnType.VARCHAR;
+        if (!strKey && col.type() != ColumnType.INT && col.type() != ColumnType.BIGINT)
             throw new MiniDbException(MiniDbException.Code.SCHEMA,
-                    "索引列仅支持 INT/BIGINT: " + columnName);
+                    "索引列仅支持 INT/BIGINT/VARCHAR(n≤" + BPlusTree.MAX_KEY_BYTES + "): " + columnName);
+        if (strKey && (col.maxLength() <= 0 || col.maxLength() > BPlusTree.MAX_KEY_BYTES))
+            throw new MiniDbException(MiniDbException.Code.SCHEMA,
+                    "VARCHAR 索引键需 ≤" + BPlusTree.MAX_KEY_BYTES + " 字节: " + columnName
+                            + "(" + col.maxLength() + ")");
+        String keyType = strKey ? IndexMeta.KEY_STRING : IndexMeta.KEY_LONG;
         BPlusTree tree = new BPlusTree(engine, 0);
         for (var it = te.table().scan(); it.hasNext(); ) {
             Row r = it.next();
             Object v = r.values()[ci];
-            long key = ((Number) v).longValue();
-            if (!tree.insert(key, r.rid()))
+            Object key = IndexKeys.encode(keyType, v);
+            if (key == null) continue; // NULL 不入索引
+            if (!IndexKeys.insert(tree, keyType, v, r.rid()))
                 throw new MiniDbException(MiniDbException.Code.EXEC,
                         "列 " + columnName + " 存在重复值 " + key + "，无法建唯一索引");
         }
-        IndexEntry entry = new IndexEntry(tableName, new IndexMeta(indexName, columnName, tree.rootPage()), tree);
+        IndexEntry entry = new IndexEntry(tableName,
+                new IndexMeta(indexName, columnName, tree.rootPage(), keyType), tree);
         indexes.put(indexName, entry);
         // 更新该表的目录条目
         TableEntry updated = new TableEntry(new Catalog.Entry(tableName, te.meta().schema(),

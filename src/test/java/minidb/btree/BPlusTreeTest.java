@@ -99,14 +99,19 @@ class BPlusTreeTest {
 
     @Test
     void leafSplitBoundary() {
+        // 变长键布局：分裂点由字节容量决定（8 字节键约 185 键/页）。
+        // 逐键插入并找出实际分裂点 K，验证 [0,K) 单叶、K+1 键时分裂且数据无损。
         BPlusTree t = newTree("f.db");
-        for (long k = 0; k < BTreeNode.LMAX - 1; k++) t.insert(k, rid(k)); // 254 键：不分裂
-        assertEquals(1, t.stats().leafNodes());
-        t.insert(BTreeNode.LMAX + 1000, rid(1000)); // 第 255 键触发分裂
+        long splitKey = -1;
+        for (long k = 0; k < 1000; k++) {
+            t.insert(k, rid(k));
+            if (splitKey < 0 && t.stats().leafNodes() > 1) { splitKey = k; break; }
+        }
+        assertTrue(splitKey > 0, "1000 个键内应触发叶分裂");
         assertEquals(2, t.stats().leafNodes());
         assertEquals(1, t.stats().internalNodes());
-        assertEquals(BTreeNode.LMAX, t.stats().totalKeys());
-        for (long k = 0; k < BTreeNode.LMAX - 1; k++) assertEquals(rid(k), t.search(k));
+        assertEquals(splitKey + 1, t.stats().totalKeys());
+        for (long k = 0; k <= splitKey; k++) assertEquals(rid(k), t.search(k));
         t.validate();
     }
 
@@ -339,9 +344,10 @@ class BPlusTreeTest {
         BTreeStats s = t.stats();
         assertEquals(10_000, s.totalKeys());
         assertTrue(s.height() >= 2);
-        assertTrue(s.leafNodes() >= 10_000 / BTreeNode.LMAX);
-        assertTrue(s.avgLeafUtilization() > 0.3 && s.avgLeafUtilization() <= 1.0);
-        assertEquals(s.leafNodes(), (int) Math.round(s.totalKeys() / (s.avgLeafUtilization() * BTreeNode.LMAX)));
+        // 8 字节键单页约 185 键，10_000 键至少 ~54 叶；字节利用率顺序插入应偏高
+        assertTrue(s.leafNodes() >= 10_000 / 185, "leafNodes=" + s.leafNodes());
+        assertTrue(s.avgLeafUtilization() > 0.3 && s.avgLeafUtilization() <= 1.0,
+                "util=" + s.avgLeafUtilization());
     }
 
     // ---------- 故障注入 ----------

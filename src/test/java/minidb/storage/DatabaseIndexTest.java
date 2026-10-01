@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -133,6 +134,58 @@ class DatabaseIndexTest {
             for (long i = 0; i < 300; i++) t.insert(new Object[]{i * 1_000_000_000L});
             d.createIndex("ib", "b", "v");
             assertEquals(new Rid(3, 42), d.getIndex("ib").search(42_000_000_000L));
+        }
+    }
+
+    // ---------- VARCHAR 索引（变长键 B+ 树） ----------
+
+    @Test
+    void createVarcharIndexAndSearch() {
+        try (Database d = db("v1.db", 128)) {
+            seed(d);
+            d.createIndex("idx_name", "emp", "name");
+            BPlusTree tree = d.getIndex("idx_name");
+            assertEquals(500, tree.stats().totalKeys());
+            assertEquals(new Rid(3, 7), tree.search("n7"));
+            assertNull(tree.search("nope"));
+            // 范围扫描对拍 TreeMap（String 字典序：n2、n100 等都落在 [n10, n20) 内）
+            java.util.TreeMap<String, Rid> ref = new java.util.TreeMap<>();
+            for (int i = 0; i < 500; i++) ref.put("n" + i, new Rid(3, i));
+            List<Rid> r = tree.rangeScan("n10", true, "n20", false);
+            assertEquals(new ArrayList<>(ref.subMap("n10", true, "n20", false).values()), r);
+        }
+    }
+
+    @Test
+    void varcharIndexPersistsAcrossReopen() {
+        try (Database d = db("v2.db", 128)) {
+            seed(d);
+            d.createIndex("idx_name", "emp", "name");
+        }
+        try (Database d = db("v2.db", 128)) {
+            assertEquals(List.of("idx_name"), d.indexNames());
+            BPlusTree tree = d.getIndex("idx_name");
+            assertEquals(new Rid(3, 123), tree.search("n123"));
+        }
+    }
+
+    @Test
+    void varcharIndexTooLongColumnRejected() {
+        try (Database d = db("v3.db", 64)) {
+            Table t = d.createTable("big", List.of(new Column("s", ColumnType.VARCHAR, 300)));
+            MiniDbException e = assertThrows(MiniDbException.class,
+                    () -> d.createIndex("idx_s", "big", "s"));
+            assertTrue(e.getMessage().contains("字节"), e.getMessage());
+        }
+    }
+
+    @Test
+    void varcharIndexValueTooLongThrows() {
+        try (Database d = db("v5.db", 64)) {
+            Table t = d.createTable("nn", List.of(new Column("s", ColumnType.VARCHAR, 20)));
+            // 先建索引（空表），再插入超长值 → BTREE 异常
+            d.createIndex("idx_s", "nn", "s");
+            assertThrows(MiniDbException.class, () -> t.insert(new Object[]{"x".repeat(30)}));
         }
     }
 }

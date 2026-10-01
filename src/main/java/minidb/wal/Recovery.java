@@ -135,8 +135,7 @@ public final class Recovery {
             Table t = db.getTable(table);
             for (Database.IndexEntry ie : db.indexesFor(table)) {
                 int ci = t.schema().columnIndex(ie.meta().column());
-                long key = ((Number) row[ci]).longValue();
-                ie.tree().insert(key, rid);
+                minidb.storage.IndexKeys.insert(ie.tree(), ie.meta().keyType(), row[ci], rid);
             }
         } catch (MiniDbException ignored) {
             // 表已删除
@@ -148,8 +147,7 @@ public final class Recovery {
             Table t = db.getTable(table);
             for (Database.IndexEntry ie : db.indexesFor(table)) {
                 int ci = t.schema().columnIndex(ie.meta().column());
-                long key = ((Number) row[ci]).longValue();
-                ie.tree().delete(key);
+                minidb.storage.IndexKeys.delete(ie.tree(), ie.meta().keyType(), row[ci]);
             }
         } catch (MiniDbException ignored) {
             // 表已删除

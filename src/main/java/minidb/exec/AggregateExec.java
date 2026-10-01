@@ -173,9 +173,12 @@ final class IndexScanExec implements ExecOp {
     private final Table table;
     private final String alias;
     private final BPlusTree tree;
-    private final long from;
+    private final boolean stringKeys;
+    private final long lFrom;
+    private final long lTo;
+    private final String sFrom;
+    private final String sTo;
     private final boolean fromInc;
-    private final long to;
     private final boolean toInc;
     private Iterator<Rid> rids;
     private Rid currentRid;
@@ -185,15 +188,35 @@ final class IndexScanExec implements ExecOp {
         this.table = table;
         this.alias = alias;
         this.tree = tree;
-        this.from = from;
+        this.stringKeys = false;
+        this.lFrom = from;
+        this.lTo = to;
+        this.sFrom = null;
+        this.sTo = null;
         this.fromInc = fromInc;
-        this.to = to;
+        this.toInc = toInc;
+    }
+
+    /** VARCHAR 索引扫描：from/to 为 null 表示无界。 */
+    IndexScanExec(Table table, String alias, BPlusTree tree,
+                  String from, boolean fromInc, String to, boolean toInc) {
+        this.table = table;
+        this.alias = alias;
+        this.tree = tree;
+        this.stringKeys = true;
+        this.lFrom = 0;
+        this.lTo = 0;
+        this.sFrom = from;
+        this.sTo = to;
+        this.fromInc = fromInc;
         this.toInc = toInc;
     }
 
     @Override
     public void open() {
-        rids = tree.rangeScan(from, fromInc, to, toInc).iterator();
+        rids = (stringKeys
+                ? tree.rangeScan(sFrom, fromInc, sTo, toInc)
+                : tree.rangeScan(lFrom, fromInc, lTo, toInc)).iterator();
     }
 
     @Override
