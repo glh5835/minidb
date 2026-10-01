@@ -10,3 +10,5 @@ tools/
 .vscode/
 build.sh
 hs_err_pid*.log
+.zcode/
+.video_agent/

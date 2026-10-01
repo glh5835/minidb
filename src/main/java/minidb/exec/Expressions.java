@@ -35,6 +35,15 @@ public final class Expressions {
     }
 
     public static EvalNode bind(Ast.Expr e, List<String> scope, Binder binder) {
+        // 常量折叠：纯常量子树（无列引用/子查询）在绑定期求值一次
+        if ((e instanceof Ast.BinOp || e instanceof Ast.UnaryOp) && isConstantExpr(e)) {
+            Object v = bindNoFold(e, List.of(), binder).eval(new Object[0]);
+            return row -> v;
+        }
+        return bindNoFold(e, scope, binder);
+    }
+
+    private static EvalNode bindNoFold(Ast.Expr e, List<String> scope, Binder binder) {
         if (e instanceof Ast.Literal lit) {
             Object v = lit.value();
             return row -> v;
@@ -114,6 +123,14 @@ public final class Expressions {
         }
         throw new MiniDbException(MiniDbException.Code.EXEC,
                 "该表达式不能在此绑定: " + e.getClass().getSimpleName());
+    }
+
+    /** 子树是否为纯常量（仅 Literal/BinOp/UnaryOp 组成，无列引用与子查询）。 */
+    private static boolean isConstantExpr(Ast.Expr e) {
+        if (e instanceof Ast.Literal) return true;
+        if (e instanceof Ast.UnaryOp u) return isConstantExpr(u.operand());
+        if (e instanceof Ast.BinOp b) return isConstantExpr(b.left()) && isConstantExpr(b.right());
+        return false;
     }
 
     private static EvalNode bindCol(Ast.ColRef ref, List<String> scope, Binder binder) {

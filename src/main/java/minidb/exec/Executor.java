@@ -868,10 +868,7 @@ public final class Executor implements Expressions.Binder {
             RelInfo rel = findRel(from, alias);
             ExecOp right = withFilter(scans.get(alias), rel.preds);
             List<Ast.Expr> on = takeJoinPredsBetween(joinPreds, alias, joinedSoFar, from);
-            List<String> scope = concat(acc.columns(), right.columns());
-            Expressions.EvalNode onNode = on.isEmpty() ? null
-                    : Expressions.bind(Expressions.andAll(on), scope, this);
-            acc = new NestedLoopJoinExec(acc, right, false, onNode);
+            acc = joinOp(acc, right, false, on, joinedSoFar, alias, from);
         }
         return acc;
     }
@@ -888,9 +885,78 @@ public final class Executor implements Expressions.Binder {
         Ast.Join j = (Ast.Join) ref;
         ExecOp left = planFromInOrder(from, j.left(), session);
         ExecOp right = planFromInOrder(from, j.right(), session);
-        Expressions.EvalNode on = j.on() == null ? null
-                : Expressions.bind(j.on(), concat(left.columns(), right.columns()), this);
-        return new NestedLoopJoinExec(left, right, j.type().equals("LEFT"), on);
+        boolean isLeft = j.type().equals("LEFT");
+        if (j.on() == null) return new NestedLoopJoinExec(left, right, isLeft, null);
+        String rightAlias = rightmostAlias(j.right());
+        if (rightAlias == null) { // 防御：右侧非单表（当前语法不产生），退回 NLJ
+            return new NestedLoopJoinExec(left, right, isLeft,
+                    Expressions.bind(j.on(), concat(left.columns(), right.columns()), this));
+        }
+        Set<String> leftAliases = new HashSet<>();
+        collectAliases(j.left(), leftAliases);
+        return joinOp(left, right, isLeft, Expressions.flattenAnd(j.on()),
+                leftAliases, rightAlias, from);
+    }
+
+    /** 用等值合取项构造 HashJoin（键分左右绑定），其余谓词做 residual；无等值键时回落 NLJ。 */
+    private ExecOp joinOp(ExecOp left, ExecOp right, boolean leftJoin,
+                          List<Ast.Expr> onPreds, Set<String> leftAliases, String rightAlias, FromInfo from) {
+        List<String> scope = concat(left.columns(), right.columns());
+        List<Ast.Expr> eqL = new ArrayList<>(), eqR = new ArrayList<>(), residual = new ArrayList<>();
+        splitEqui(onPreds, leftAliases, rightAlias, from, eqL, eqR, residual);
+        if (!eqL.isEmpty() && !eqR.isEmpty()) {
+            List<Expressions.EvalNode> kl = new ArrayList<>();
+            for (Ast.Expr e : eqL) kl.add(Expressions.bind(e, left.columns(), this));
+            List<Expressions.EvalNode> kr = new ArrayList<>();
+            for (Ast.Expr e : eqR) kr.add(Expressions.bind(e, right.columns(), this));
+            Expressions.EvalNode res = residual.isEmpty() ? null
+                    : Expressions.bind(Expressions.andAll(residual), scope, this);
+            return new HashJoinExec(left, right, leftJoin, kl, kr, res);
+        }
+        Expressions.EvalNode onNode = onPreds.isEmpty() ? null
+                : Expressions.bind(Expressions.andAll(onPreds), scope, this);
+        return new NestedLoopJoinExec(left, right, leftJoin, onNode);
+    }
+
+    /** 等值谓词两侧均为 FROM 内列且分属连接两侧 → 拆为左右键（统一左=左侧表）；否则进 residual。 */
+    private void splitEqui(List<Ast.Expr> preds, Set<String> leftAliases, String rightAlias, FromInfo from,
+                           List<Ast.Expr> eqL, List<Ast.Expr> eqR, List<Ast.Expr> residual) {
+        for (Ast.Expr p : preds) {
+            if (p instanceof Ast.BinOp b && b.op().equals("=")
+                    && b.left() instanceof Ast.ColRef cl && b.right() instanceof Ast.ColRef cr) {
+                String ol = resolveOwner(cl, from);
+                String or = resolveOwner(cr, from);
+                if (ol != null && or != null) {
+                    if (leftAliases.contains(ol) && or.equals(rightAlias)) {
+                        eqL.add(cl);
+                        eqR.add(cr);
+                        continue;
+                    }
+                    if (leftAliases.contains(or) && ol.equals(rightAlias)) {
+                        eqL.add(cr);
+                        eqR.add(cl);
+                        continue;
+                    }
+                }
+            }
+            residual.add(p);
+        }
+    }
+
+    private static void collectAliases(Ast.TableRef ref, Set<String> out) {
+        if (ref instanceof Ast.NamedTable nt) {
+            out.add(nt.alias() != null ? nt.alias() : nt.name());
+        } else {
+            Ast.Join j = (Ast.Join) ref;
+            collectAliases(j.left(), out);
+            collectAliases(j.right(), out);
+        }
+    }
+
+    /** Join 节点右侧恒为单表（语法左结合）；返回 null 表示非单表。 */
+    private static String rightmostAlias(Ast.TableRef ref) {
+        if (ref instanceof Ast.NamedTable nt) return nt.alias() != null ? nt.alias() : nt.name();
+        return null;
     }
 
     private RelInfo findRel(FromInfo from, String alias) {

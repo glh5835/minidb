@@ -485,4 +485,104 @@ class ExecutorSqlTest {
         // 带别名的自连接应正常
         q("SELECT a.id FROM emp a, emp b WHERE a.id = b.id");
     }
+
+    // ---------- Hash Join 语义 ----------
+
+    @Test
+    void leftHashJoinResidualOnTreatsAsUnmatched() {
+        setupEmpDept();
+        // ON 等值 + residual：alice 的匹配（eng）被 residual 拒绝 → LEFT 语义补 null
+        Executor.Result r = q("SELECT e.name, d.dname FROM emp e LEFT JOIN dept d "
+                + "ON e.dept = d.id AND d.dname <> 'eng' ORDER BY e.name");
+        assertEquals(4, r.rowCount());
+        assertEquals("alice", r.rows().get(0)[0]);
+        assertNull(r.rows().get(0)[1], "等值命中但被 residual 拒绝应视为未匹配");
+        assertEquals("bob", r.rows().get(1)[0]);
+        assertEquals("sales", r.rows().get(1)[1]);
+        assertEquals("carol", r.rows().get(2)[0]);
+        assertNull(r.rows().get(2)[1]);
+        assertEquals("dave", r.rows().get(3)[0]);
+        assertNull(r.rows().get(3)[1]);
+    }
+
+    @Test
+    void hashJoinOneToManyFanout() {
+        setupEmpDept();
+        // 一行部门匹配多行员工
+        q("INSERT INTO emp VALUES (5,'erin',10,95.0),(6,'frank',10,88.0)");
+        Executor.Result r = q("SELECT d.dname, e.name FROM dept d INNER JOIN emp e "
+                + "ON e.dept = d.id WHERE d.dname = 'eng' ORDER BY e.name");
+        assertEquals(4, r.rowCount()); // alice + carol + erin + frank（carol 也是 dept 10）
+        assertEquals("erin", r.rows().get(2)[1]);
+        assertEquals("frank", r.rows().get(3)[1]);
+    }
+
+    @Test
+    void hashJoinStringKeys() {
+        setupEmpDept();
+        // VARCHAR 等值连接（键为 String，不走数值归一）
+        Executor.Result r = q("SELECT e.id FROM emp e INNER JOIN dept d "
+                + "ON e.name = d.dname");
+        assertEquals(0, r.rowCount()); // 当前数据无交集，仅验证 String 键不抛错
+        q("INSERT INTO dept VALUES (99, 'alice')");
+        r = q("SELECT e.id, d.id FROM emp e INNER JOIN dept d ON e.name = d.dname");
+        assertEquals(1, r.rowCount());
+        assertEquals(1, r.rows().get(0)[0]);
+    }
+
+    @Test
+    void hashJoinCrossTypeNumericKeys() {
+        q("CREATE TABLE it (a INT)");
+        q("CREATE TABLE dt (b DOUBLE)");
+        q("INSERT INTO it VALUES (1),(2)");
+        q("INSERT INTO dt VALUES (1.0),(3.5)");
+        // Integer 1 vs Double 1.0 应归一为相等（与 compare 语义一致）；2 无匹配
+        Executor.Result r = q("SELECT it.a, dt.b FROM it INNER JOIN dt ON it.a = dt.b ORDER BY it.a");
+        assertEquals(1, r.rowCount());
+        assertEquals(1, r.rows().get(0)[0]);
+        assertEquals(1.0, r.rows().get(0)[1]);
+    }
+
+    @Test
+    void hashJoinEmptyBuildSide() {
+        setupEmpDept();
+        q("CREATE TABLE empty_t (id INT)");
+        Executor.Result r = q("SELECT e.name, t.id FROM emp e INNER JOIN empty_t t ON e.dept = t.id");
+        assertEquals(0, r.rowCount());
+        r = q("SELECT e.name, t.id FROM emp e LEFT JOIN empty_t t ON e.dept = t.id ORDER BY e.name");
+        assertEquals(4, r.rowCount()); // 全部 null 扩展
+        assertNull(r.rows().get(0)[1]);
+    }
+
+    @Test
+    void hashJoinWherePostFilter() {
+        setupEmpDept();
+        // WHERE 跨表非等值谓词：join 后过滤（不参与哈希键）
+        Executor.Result r = q("SELECT e.name FROM emp e INNER JOIN dept d "
+                + "ON e.dept = d.id WHERE d.id >= 10 AND e.salary > 85 ORDER BY e.name");
+        assertEquals(2, r.rowCount()); // bob(sales,80)被排除，alice/carol(eng)保留
+        assertEquals("alice", r.rows().get(0)[0]);
+        assertEquals("carol", r.rows().get(1)[0]);
+    }
+
+    // ---------- 常量折叠 ----------
+
+    @Test
+    void constantFoldingInProjection() {
+        Executor.Result r = q("SELECT NOT (1 = 2) AS t, -5 AS n, 7 / 2 AS d, 1 / 0 AS z");
+        assertEquals(1, r.rowCount());
+        Object[] row = r.rows().get(0);
+        assertEquals(Boolean.TRUE, row[0]);
+        assertEquals(-5, row[1]);
+        assertEquals(3, row[2]);
+        assertNull(row[3], "常量除零折叠为 NULL");
+    }
+
+    @Test
+    void constantFoldingInWhere() {
+        setupEmpDept();
+        Executor.Result r = q("SELECT name FROM emp WHERE salary = 80.0 + 10.0");
+        assertEquals(1, r.rowCount());
+        assertEquals("carol", r.rows().get(0)[0]); // carol 90.0
+    }
 }

@@ -243,8 +243,153 @@ final class NestedLoopJoinExec implements ExecOp {
     }
 }
 
-/** 排序（物化后内存排序，支持重开复用）。 */
-final class SortExec implements ExecOp {
+/**
+ * 哈希等值连接（INNER / LEFT）：open 时把 build 侧（右子树）一次性物化成哈希表，
+ * probe 逐左行查桶。仅处理等值合取项，非等值 ON 谓词由 residual 在拼接行上过滤。
+ * NULL 键不入表、不参与匹配（与 compareOp 的 NULL 语义一致）。
+ * 注意：build 侧内含 LockExec 时，行锁在物化阶段一次性取得（早于 NLJ 的逐行加锁，语义等价）。
+ */
+final class HashJoinExec implements ExecOp {
+    private final ExecOp left;
+    private final ExecOp right;
+    private final boolean leftJoin;
+    private final List<Expressions.EvalNode> leftKeys;
+    private final List<Expressions.EvalNode> rightKeys;
+    private final Expressions.EvalNode residual; // 可为 null
+    private final List<String> cols;
+
+    private java.util.HashMap<JoinKey, java.util.List<Object[]>> table;
+    private java.util.List<Object[]> pending;
+    private int pendPos;
+    private Object[] leftRow;
+    private boolean matched;
+
+    HashJoinExec(ExecOp left, ExecOp right, boolean leftJoin,
+                 List<Expressions.EvalNode> leftKeys, List<Expressions.EvalNode> rightKeys,
+                 Expressions.EvalNode residual) {
+        this.left = left;
+        this.right = right;
+        this.leftJoin = leftJoin;
+        this.leftKeys = leftKeys;
+        this.rightKeys = rightKeys;
+        this.residual = residual;
+        java.util.ArrayList<String> c = new java.util.ArrayList<>(left.columns());
+        c.addAll(right.columns());
+        this.cols = List.copyOf(c);
+    }
+
+    /** 连接键：数值统一归一（整值 double → Long，整数 → Long），保证跨类型等值与 compare() 一致。 */
+    private record JoinKey(Object[] vals) {
+        @Override public boolean equals(Object o) {
+            return o instanceof JoinKey k && java.util.Arrays.equals(vals, k.vals);
+        }
+        @Override public int hashCode() {
+            return java.util.Arrays.hashCode(vals);
+        }
+    }
+
+    private static Object canonKey(Object v) {
+        if (v instanceof Double d) {
+            long lv = d.longValue();
+            if (lv == d) return lv; // 注意不能用三目：long/Double 混合会被类型提升为 double
+            return d;
+        }
+        if (v instanceof Number n) return n.longValue();
+        return v;
+    }
+
+    private JoinKey keyOf(List<Expressions.EvalNode> keys, Object[] row) {
+        Object[] vals = new Object[keys.size()];
+        for (int i = 0; i < keys.size(); i++) {
+            Object v = keys.get(i).eval(row);
+            if (v == null) return null; // NULL 键不匹配
+            vals[i] = canonKey(v);
+        }
+        return new JoinKey(vals);
+    }
+
+    private Object[] combine(Object[] lr, Object[] rr) {
+        Object[] out = new Object[cols.size()];
+        System.arraycopy(lr, 0, out, 0, lr.length);
+        System.arraycopy(rr, 0, out, lr.length, rr.length);
+        return out;
+    }
+
+    private Object[] nullExtended(Object[] lr) {
+        Object[] out = new Object[cols.size()];
+        System.arraycopy(lr, 0, out, 0, lr.length);
+        return out;
+    }
+
+    @Override
+    public void open() {
+        right.open();
+        table = new java.util.HashMap<>();
+        Object[] r;
+        while ((r = right.next()) != null) {
+            JoinKey k = keyOf(rightKeys, r);
+            if (k == null) continue;
+            table.computeIfAbsent(k, x -> new java.util.ArrayList<>()).add(r);
+        }
+        left.open();
+        pending = null;
+        leftRow = null;
+        matched = false;
+    }
+
+    @Override
+    public Object[] next() {
+        while (true) {
+            if (pending != null) {
+                while (pendPos < pending.size()) {
+                    Object[] rr = pending.get(pendPos++);
+                    Object[] combined = combine(leftRow, rr);
+                    if (residual == null || Expressions.truthy(residual.eval(combined))) {
+                        matched = true;
+                        return combined;
+                    }
+                }
+                pending = null;
+                // 有哈希匹配但全部被 residual 拒绝 → LEFT 语义视为未匹配
+                if (leftJoin && !matched) return nullExtended(leftRow);
+            }
+            leftRow = left.next();
+            if (leftRow == null) return null;
+            matched = false;
+            JoinKey k = keyOf(leftKeys, leftRow);
+            pending = k == null ? null : table.get(k);
+            if (pending == null) {
+                if (leftJoin) return nullExtended(leftRow);
+                continue;
+            }
+            pendPos = 0;
+        }
+    }
+
+    @Override
+    public List<String> columns() {
+        return cols;
+    }
+
+    @Override
+    public String describe() {
+        return "HashJoin(" + leftJoin + ", keys=" + leftKeys.size() + ")";
+    }
+
+    @Override
+    public List<ExecOp> children() {
+        return List.of(left, right);
+    }
+
+    @Override
+    public void close() {
+        left.close();
+        right.close();
+        table = null;
+    }
+}
+
+/** 排序（物化后内存排序，支持重开复用）。 */final class SortExec implements ExecOp {
     record SortKey(Expressions.EvalNode node, boolean desc) {}
 
     private final ExecOp child;

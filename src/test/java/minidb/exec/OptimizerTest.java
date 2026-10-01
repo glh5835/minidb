@@ -92,4 +92,34 @@ class OptimizerTest {
         String plan = ex.explain("SELECT * FROM small WHERE id = 1");
         assertTrue(plan.contains("SeqScan(small)"), plan);
     }
+
+    // ---------- 连接算子选择 ----------
+
+    @Test
+    void equiJoinUsesHashJoin() {
+        String plan = ex.explain("SELECT small.w FROM small INNER JOIN big ON small.id = big.id");
+        assertTrue(plan.contains("HashJoin(false"), "等值 ON 应选 HashJoin: " + plan);
+        assertEquals(3, ex.execute(
+                "SELECT small.w FROM small INNER JOIN big ON small.id = big.id").rowCount());
+    }
+
+    @Test
+    void leftEquiJoinUsesHashJoin() {
+        String plan = ex.explain("SELECT small.w FROM small LEFT JOIN big ON small.id = big.id");
+        assertTrue(plan.contains("HashJoin(true"), "LEFT 等值 ON 应选 HashJoin: " + plan);
+    }
+
+    @Test
+    void nonEquiJoinFallsBackToNestedLoop() {
+        String plan = ex.explain("SELECT small.w FROM small INNER JOIN big ON small.id < big.id");
+        assertTrue(plan.contains("NestedLoopJoin"), "非等值 ON 应回落 NLJ: " + plan);
+        assertFalse(plan.contains("HashJoin"), plan);
+    }
+
+    @Test
+    void equiWithResidualStillHashJoin() {
+        String plan = ex.explain(
+                "SELECT small.w FROM small INNER JOIN big ON small.id = big.id AND big.v < 5");
+        assertTrue(plan.contains("HashJoin"), "等值+非等值混合 ON 仍应选 HashJoin: " + plan);
+    }
 }
