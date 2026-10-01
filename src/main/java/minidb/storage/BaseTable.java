@@ -170,6 +170,11 @@ abstract class BaseTable implements Table {
     public int pageCount() { return pageFree.size(); }
 
     @Override
+    public int prevPageId(int pageId) {
+        return pool.withPage(pageId, false, p -> TablePageHeader.prevPage(p.data()));
+    }
+
+    @Override
     public long totalFreeBytes() {
         long n = 0;
         for (int f : pageFree.values()) n += f;

@@ -67,6 +67,75 @@ class RecoveryTest {
     }
 
     @Test
+    void stealEvictedUncommittedPageNotVisibleAfterCrash() {
+        // steal 正确性：未提交修改的页被强制淘汰落盘（小缓冲池 + 足量插入），
+        // 断电后恢复必须把这些未提交行全部撤销
+        Path f = dbFile();
+        Database db = Database.open(f, 8); // 8 页小池 → 未提交插入必然触发淘汰
+        Executor ex = new Executor(db);
+        ex.execute("CREATE TABLE t (id INT, v INT)");
+        TxnSession s = ex.begin(TxnSession.Isolation.READ_COMMITTED);
+        for (int i = 1; i <= 300; i++)
+            ex.execute("INSERT INTO t VALUES (" + i + ", " + i * 7 + ")", s);
+        assertTrue(db.wal().flushedLsn() > 0, "淘汰应经 FlushHook 推进 fsync 高水位");
+        db.crash();
+        Database db2 = Database.open(f, 64);
+        Executor ex2 = new Executor(db2);
+        assertEquals(0, (int) ex2.execute("SELECT COUNT(*) FROM t").rows().get(0)[0],
+                "被淘汰落盘的未提交行必须被恢复撤销");
+        db2.close();
+    }
+
+    @Test
+    void noForceCommitRecoveredByRedo() {
+        // no-force：commit 后不刷任何数据页即断电，redo 必须能重建已提交修改
+        Path f = dbFile();
+        Database db = Database.open(f, 64);
+        Executor ex = new Executor(db);
+        ex.execute("CREATE TABLE t (id INT, v INT)");
+        ex.execute("INSERT INTO t VALUES (1, 100)");
+        TxnSession s = ex.begin(TxnSession.Isolation.READ_COMMITTED);
+        ex.execute("UPDATE t SET v = 200 WHERE id = 1", s);
+        ex.execute("INSERT INTO t VALUES (2, 300)", s);
+        ex.commit(s);
+        db.crash(); // commit 只 fsync 日志，数据页全部留在池中未落盘
+        Database db2 = Database.open(f, 64);
+        Executor ex2 = new Executor(db2);
+        assertEquals(200, ex2.execute("SELECT v FROM t WHERE id = 1").rows().get(0)[0]);
+        assertEquals(300, ex2.execute("SELECT v FROM t WHERE id = 2").rows().get(0)[0]);
+        db2.close();
+    }
+
+    @Test
+    @Timeout(60)
+    void migratedUpdateUndoneAndRedoneCorrectly() {
+        // VarTable 迁移式 UPDATE：先塞满一页迫使 UPDATE 迁移到新页，
+        // 分别验证 undo（未提交）与 redo+undo（提交后崩溃的第三种行不受影响）
+        Path f = dbFile();
+        Database db = Database.open(f, 64);
+        Executor ex = new Executor(db);
+        ex.execute("CREATE TABLE t (id INT, note VARCHAR(100))");
+        for (int i = 1; i <= 40; i++)
+            ex.execute("INSERT INTO t VALUES (" + i + ", 'pad" + i + "-" + "x".repeat(60) + "')");
+        // 迁移式更新：把 note 改长 → 原页放不下 → 迁移
+        TxnSession s = ex.begin(TxnSession.Isolation.READ_COMMITTED);
+        ex.execute("UPDATE t SET note = '" + "y".repeat(90) + "' WHERE id = 5", s);
+        ex.commit(s);
+        // 未提交迁移更新
+        TxnSession s2 = ex.begin(TxnSession.Isolation.READ_COMMITTED);
+        ex.execute("UPDATE t SET note = '" + "z".repeat(90) + "' WHERE id = 8", s2);
+        db.crash();
+        Database db2 = Database.open(f, 64);
+        Executor ex2 = new Executor(db2);
+        Object committed = ex2.execute("SELECT note FROM t WHERE id = 5").rows().get(0)[0];
+        assertEquals("y".repeat(90), committed, "已提交的迁移更新必须由 redo 重建");
+        Object uncommitted = ex2.execute("SELECT note FROM t WHERE id = 8").rows().get(0)[0];
+        assertEquals("pad8-" + "x".repeat(60), uncommitted, "未提交的迁移更新必须被撤销回原值");
+        assertEquals(40, (int) ex2.execute("SELECT COUNT(*) FROM t").rows().get(0)[0]);
+        db2.close();
+    }
+
+    @Test
     void ddlFlushedUncommittedDmlUndoneByRecovery() {
         // 未提交事务的脏页可借 DDL 的 engine.flush() 落盘（flushAll 无视 pin）。
         // 断电后恢复必须靠 WAL 条件 undo 撤销——这是 WAL 真正发挥作用的场景：

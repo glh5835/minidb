@@ -35,6 +35,9 @@ public final class WalLog implements AutoCloseable {
     private long lsn;
     /** 关闭后 sync 仅刷 OS 缓冲语义（进程崩溃安全，断电不保证）——高吞吐批量导入/压测用。 */
     private volatile boolean fsyncEnabled = true;
+    /** 已 fsync 的最大 LSN（含）与文件字节高水位：steal 协议下 FlushHook 的去重依据。 */
+    private long flushedLsn;
+    private long flushedBytes;
 
     public WalLog(Path file) {
         this.file = file;
@@ -172,12 +175,34 @@ public final class WalLog implements AutoCloseable {
         if (!fsyncEnabled) return;
         try {
             ch.force(true);
+            flushedLsn = lsn - 1;
+            flushedBytes = ch.position();
         } catch (IOException e) {
             throw new MiniDbException(MiniDbException.Code.WAL, "WAL fsync 失败", e);
         }
     }
 
     /** 读出全部完整记录（容忍尾部截断）。 */
+    /** 保证 lsn 及之前的记录已落盘；已 sync 过则 no-op（steal 淘汰路径高频调用）。 */
+    public synchronized void syncUpTo(long lsn) {
+        if (fsyncEnabled && lsn > flushedLsn) sync();
+    }
+
+    /** 已 fsync 的最大 LSN（含）。 */
+    public synchronized long flushedLsn() { return flushedLsn; }
+
+    /** 已 fsync 的文件字节高水位（断电模拟测试的"安全线"）。 */
+    public synchronized long flushedBytes() { return flushedBytes; }
+
+    /** 断电语义关闭：不 sync 直接关通道（配合 flushedBytes 模拟 OS 缓冲丢失）。 */
+    public void abruptClose() {
+        try {
+            ch.close();
+        } catch (IOException e) {
+            throw new MiniDbException(MiniDbException.Code.WAL, "WAL 关闭失败", e);
+        }
+    }
+
     public synchronized List<Rec> readAll() {
         List<Rec> out = new ArrayList<>();
         try {

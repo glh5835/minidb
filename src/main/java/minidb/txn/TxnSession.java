@@ -11,7 +11,9 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 事务会话：锁列表、undo 栈、pinned 页（no-steal：修改过的页 pin 住直到事务结束，防止未提交修改落盘）。
+ * 事务会话：锁列表、undo 栈、新建页追踪。
+ * steal/no-force 协议下未提交脏页可被淘汰（经 FlushHook 保证 WAL 先写），
+ * 仅"事务内新建的页"在提交时连同其前驱页强制落盘（页创建与链改动不入日志）。
  */
 public final class TxnSession {
     public enum Isolation { READ_COMMITTED, REPEATABLE_READ }
@@ -24,6 +26,8 @@ public final class TxnSession {
     public final List<String> heldLocks = new ArrayList<>();
     public final List<Runnable> undoActions = new ArrayList<>();
     public final Set<Integer> pinnedPages = new LinkedHashSet<>();
+    /** 本事务新建的数据页（页创建不入 WAL，提交时 mini-force 落盘）。 */
+    public final java.util.Map<Integer, Integer> newPages = new java.util.LinkedHashMap<>();
     public final BufferPool pool;
     public final boolean readOnly;
     public boolean finished;
@@ -74,9 +78,13 @@ public final class TxnSession {
         heldLocks.remove(key);
     }
 
-    /** no-steal：把修改过的页 pin 住，直到 commit/abort。 */
+    /** 追踪事务内新建的数据页（提交时与其前驱页一起强制落盘）。 */
+    public void trackNewPage(int pageId, int prevPageId) {
+        newPages.putIfAbsent(pageId, prevPageId);
+    }
+
+    /** 兼容保留：steal 协议下不再 pin 修改页（no-op）。 */
     public void pinPage(int pageId) {
-        if (pinnedPages.add(pageId)) pool.getPage(pageId); // pin 不释放
     }
 
     public void unpinAll(boolean dirty) {

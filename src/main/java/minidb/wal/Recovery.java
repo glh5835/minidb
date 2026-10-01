@@ -15,19 +15,24 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 崩溃恢复：undo-only（no-steal + force-at-commit）。
+ * 崩溃恢复：redo + undo（steal + no-force，简化 ARIES）。
  *
- * 协议：事务的 DML 先 append WAL；commit 时 wal.sync() → flush 事务 pin 的页 → append COMMIT + sync。
- * 因此：磁盘上存在某未提交事务的部分修改，当且仅当其日志完整（先于数据落盘）→ 条件 undo 即可；
- * 已提交事务的修改必然已全部落盘 → 无需 redo。
- * 恢复步骤：读日志 → 找出无 COMMIT 记录的事务 → 按事务逆序、事务内 LSN 逆序执行条件 undo → 截断日志。
+ * 协议：DML 记录先于数据页落盘（日志临界区 + FlushHook 的 syncUpTo(pageLsn)）；
+ * commit = append COMMIT + sync（no-force，数据页交给淘汰器）；事务新建页在提交时
+ * 连同前驱页 mini-force（页创建与链改动不入日志）。迁移式 UPDATE 改记
+ * DELETE(旧RID)+INSERT(新RID) 两条日志，重放与撤销都以稳定 RID 为锚。
+ *
+ * 恢复三步：
+ *  1. 分析：按 txnId 分组，收集已提交事务集合；
+ *  2. redo：LSN 序条件幂等重放全部 DML（含未提交——undo 随后撤销），行镜像一致才跳过；
+ *  3. undo：对无 COMMIT 的事务按事务逆序、事务内 LSN 逆序执行条件 undo。
  * 条件应用（幂等）：镜像与当前行内容一致才操作，恢复可安全重入。
  */
 public final class Recovery {
     private Recovery() {}
 
     public static void recover(Database db, List<WalLog.Rec> records) {
-        // 按 txn 分组
+        // pass 1：分析
         Map<Long, List<WalLog.Rec>> byTxn = new HashMap<>();
         Set<Long> committed = new LinkedHashSet<>();
         for (WalLog.Rec r : records) {
@@ -35,12 +40,53 @@ public final class Recovery {
             if (r.type() == WalLog.INSERT || r.type() == WalLog.DELETE || r.type() == WalLog.UPDATE)
                 byTxn.computeIfAbsent(r.txnId(), k -> new ArrayList<>()).add(r);
         }
+        // pass 2：redo（LSN 序条件重放全部 DML，含未提交）
+        for (WalLog.Rec r : records) redoRec(db, r);
+        // pass 3：undo（未提交事务，逆序）
         for (Long txn : byTxn.keySet()) {
             if (committed.contains(txn)) continue;
             List<WalLog.Rec> ops = byTxn.get(txn);
             for (int i = ops.size() - 1; i >= 0; i--) {
                 undoRec(db, ops.get(i));
             }
+        }
+    }
+
+    /** 单条 DML 的条件 redo（幂等：磁盘状态已包含该记录效果则跳过）。 */
+    static void redoRec(Database db, WalLog.Rec r) {
+        Table t;
+        try {
+            t = db.getTable(r.table());
+        } catch (MiniDbException e) {
+            return; // 表在日志后被删除，忽略
+        }
+        RowCodec codec = new RowCodec(t.schema());
+        Rid rid = new Rid(r.pageId(), r.slot());
+        switch (r.type()) {
+            case WalLog.INSERT -> {
+                Object[] after = decode(codec, r.after());
+                if (!rowExists(t, rid)) {
+                    t.restoreAt(rid, after);
+                    indexInsert(db, r.table(), rid, after);
+                }
+            }
+            case WalLog.DELETE -> {
+                Object[] before = decode(codec, r.before());
+                if (rowMatches(t, rid, before)) {
+                    t.delete(rid);
+                    indexDelete(db, r.table(), before);
+                }
+            }
+            case WalLog.UPDATE -> {
+                Object[] before = decode(codec, r.before());
+                Object[] after = decode(codec, r.after());
+                if (rowMatches(t, rid, before)) {
+                    t.update(rid, after);
+                    indexDelete(db, r.table(), before);
+                    indexInsert(db, r.table(), rid, after);
+                }
+            }
+            default -> { /* BEGIN/COMMIT/ABORT 无操作 */ }
         }
     }
 
@@ -79,33 +125,6 @@ public final class Recovery {
                 }
             }
             default -> { /* BEGIN/COMMIT/ABORT 无操作 */ }
-        }
-    }
-
-    /** 条件 REDO（保留接口：当前协议为 force-at-commit，redo 通常为空操作）。 */
-    public static void redoCommitted(Database db, List<WalLog.Rec> records) {
-        Set<Long> committed = new LinkedHashSet<>();
-        for (WalLog.Rec r : records) if (r.type() == WalLog.COMMIT) committed.add(r.txnId());
-        for (WalLog.Rec r : records) {
-            if (!committed.contains(r.txnId())) continue;
-            Table t;
-            try {
-                t = db.getTable(r.table());
-            } catch (MiniDbException e) {
-                continue;
-            }
-            RowCodec codec = new RowCodec(t.schema());
-            Rid rid = new Rid(r.pageId(), r.slot());
-            switch (r.type()) {
-                case WalLog.INSERT -> {
-                    Object[] after = decode(codec, r.after());
-                    if (!rowExists(t, rid)) {
-                        t.restoreAt(rid, after);
-                        indexInsert(db, r.table(), rid, after);
-                    }
-                }
-                default -> { /* UPDATE/DELETE 在 force-at-commit 下必已落盘 */ }
-            }
         }
     }
 

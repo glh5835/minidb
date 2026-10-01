@@ -35,7 +35,9 @@ public final class Database implements AutoCloseable {
             }
         }
         this.wal = new minidb.wal.WalLog(walPath(file));
-        // 崩溃恢复：undo-only（协议见 Recovery 注释）
+        // FlushHook：任何脏页落盘前，把该页 pageLsn 之前的 WAL 强制落盘（WAL 先写原则）
+        engine.pool().setFlushHook(page -> wal.syncUpTo(page.pageLsn()));
+        // 崩溃恢复：redo + undo（协议见 Recovery 注释）
         java.util.List<minidb.wal.WalLog.Rec> records = wal.readAll();
         if (!records.isEmpty()) {
             minidb.wal.Recovery.recover(this, records);
@@ -60,9 +62,9 @@ public final class Database implements AutoCloseable {
         return txnCounter.getAndIncrement();
     }
 
-    /** 模拟断电：缓冲池不刷盘、日志不截断，直接关闭文件句柄。 */
+    /** 模拟断电：缓冲池不刷盘、日志不 fsync 不截断，直接关闭句柄（OS 缓冲中的日志字节视为丢失）。 */
     public synchronized void crash() {
-        wal.close();
+        wal.abruptClose();
         engine.abruptClose();
     }
 

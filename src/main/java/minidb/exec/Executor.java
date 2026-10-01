@@ -6,6 +6,7 @@ import minidb.common.Rid;
 import minidb.sql.Ast;
 import minidb.sql.Parser;
 import minidb.sql.Token;
+import minidb.storage.BufferPool;
 import minidb.storage.Column;
 import minidb.storage.ColumnType;
 import minidb.storage.Database;
@@ -157,18 +158,25 @@ public final class Executor implements Expressions.Binder {
         return s;
     }
 
-    /** 提交：日志 fsync → 强制刷出事务 pin 的数据页 → 写 COMMIT 日志（no-steal/force-at-commit）。 */
+    /**
+     * 提交（steal/no-force）：写 COMMIT 日志并 fsync（持久性边界），数据页不再强制刷盘——
+     * 未提交脏页由淘汰器按 WAL 先写原则落盘。仅"事务内新建的页"连同其前驱页强制落盘：
+     * 页创建与链改动不入日志，mini-force 保证已提交新页在磁盘上可达。
+     */
     public void commit(TxnSession s) {
         if (s.finished) return;
-        if (!s.readOnly) db.wal().sync();
-        for (int pid : s.pinnedPages) db.engine().pool().flushPage(pid);
-        db.engine().flushSystemPages();
         if (!s.readOnly) {
             db.wal().append(WalLog.COMMIT, s.txnId, "", -1, -1, null, null);
             db.wal().sync();
         }
+        for (java.util.Map.Entry<Integer, Integer> e : s.newPages.entrySet()) {
+            db.engine().pool().flushPage(e.getKey());
+            int prev = e.getValue();
+            if (prev > 0) db.engine().pool().flushPage(prev);
+        }
+        db.engine().flushSystemPages();
         db.lockManager().releaseAll(s.txnId, s.heldLocks);
-        s.unpinAll(false); // 已强制刷盘：干净的 unpin（不能再标脏）
+        s.unpinAll(false);
         s.finished = true;
     }
 
@@ -178,7 +186,7 @@ public final class Executor implements Expressions.Binder {
         for (int i = s.undoActions.size() - 1; i >= 0; i--) s.undoActions.get(i).run();
         db.wal().append(WalLog.ABORT, s.txnId, "", -1, -1, null, null);
         db.lockManager().releaseAll(s.txnId, s.heldLocks);
-        s.unpinAll(true); // 回滚后的页内容一致，允许脏淘汰
+        s.unpinAll(true); // 回滚后的页内容一致
         s.finished = true;
     }
 
@@ -236,28 +244,45 @@ public final class Executor implements Expressions.Binder {
                         .eval(new Object[0]);
                 values[i] = coerce(v, schema.columns().get(i));
             }
-            Rid rid = t.insert(values);
-            trackInsert(s, t, rid, values);
+            Rid rid = insertWithLog(s, t, values);
             maintainIndexesOnInsert(ins.table(), rid, values, schema);
             count++;
         }
         return message(count + " 行已插入");
     }
 
-    /** 写语句的事务挂钩：行锁 + WAL + no-steal 页 pin + undo 动作。 */
-    private void trackInsert(TxnSession s, Table t, Rid rid, Object[] values) {
-        if (s == null) return;
+    /**
+     * 插入一行：日志临界区内完成 {页修改 + WAL 追加 + pageLsn 回填}，保证任何脏页
+     * 落盘前其 INSERT 记录必已在日志中。行锁在临界区外补加（行锁语义见 LockExec）。
+     */
+    private Rid insertWithLog(TxnSession s, Table t, Object[] values) {
         String table = t.schema().tableName();
-        s.lockRow(table, rid, false);
-        s.pinPage(rid.pageId());
-        byte[] after = new minidb.storage.RowCodec(t.schema()).encode(values);
-        db.wal().append(WalLog.INSERT, s.txnId, table, rid.pageId(), rid.slot(), null, after);
-        s.undoActions.add(() -> {
-            if (rowExists(t, rid)) {
-                t.delete(rid);
-                indexDelete(table, values);
+        BufferPool pool = db.engine().pool();
+        pool.beginLogCritical();
+        long lsn = 0;
+        Rid rid;
+        try {
+            int pcBefore = t.pageCount();
+            rid = t.insert(values);
+            if (s != null) {
+                byte[] after = new minidb.storage.RowCodec(t.schema()).encode(values);
+                lsn = db.wal().append(WalLog.INSERT, s.txnId, table, rid.pageId(), rid.slot(), null, after);
+                if (t.pageCount() > pcBefore) s.trackNewPage(rid.pageId(), t.prevPageId(rid.pageId()));
             }
-        });
+        } finally {
+            pool.endLogCritical();
+        }
+        if (lsn > 0) pool.setPageLsn(rid.pageId(), lsn);
+        if (s != null) {
+            s.lockRow(table, rid, false);
+            s.undoActions.add(() -> {
+                if (rowExists(t, rid)) {
+                    t.delete(rid);
+                    indexDelete(table, values);
+                }
+            });
+        }
+        return rid;
     }
 
     private static boolean rowExists(Table t, Rid rid) {
@@ -368,11 +393,33 @@ public final class Executor implements Expressions.Binder {
                 Object v = valueNodes.get(i).eval(old);
                 updated[colIdx[i]] = coerce(v, schema.columns().get(colIdx[i]));
             }
-            if (s != null) {
-                s.pinPage(rid.pageId());
-                db.wal().append(WalLog.UPDATE, s.txnId, u.table(), rid.pageId(), rid.slot(),
-                        new minidb.storage.RowCodec(schema).encode(old),
-                        new minidb.storage.RowCodec(schema).encode(updated));
+            // 日志临界区：{页修改 → WAL 追加 → pageLsn 回填} 对其他线程的淘汰原子。
+            // VarTable 迁移（update 返回新 RID）改记 DELETE+INSERT 两条日志：
+            // 逻辑重放与撤销都以稳定 RID 为锚，恢复语义天然正确。
+            boolean migrated = false;
+            Rid newRid = rid;
+            db.engine().pool().beginLogCritical();
+            try {
+                newRid = t.update(rid, updated);
+                migrated = !newRid.equals(rid);
+                if (s != null) {
+                    byte[] b = new minidb.storage.RowCodec(schema).encode(old);
+                    byte[] a = new minidb.storage.RowCodec(schema).encode(updated);
+                    if (migrated) {
+                        long lsnDel = db.wal().append(WalLog.DELETE, s.txnId, u.table(),
+                                rid.pageId(), rid.slot(), b, null);
+                        long lsnIns = db.wal().append(WalLog.INSERT, s.txnId, u.table(),
+                                newRid.pageId(), newRid.slot(), null, a);
+                        db.engine().pool().setPageLsn(rid.pageId(), lsnDel);
+                        db.engine().pool().setPageLsn(newRid.pageId(), lsnIns);
+                    } else {
+                        long lsn = db.wal().append(WalLog.UPDATE, s.txnId, u.table(),
+                                rid.pageId(), rid.slot(), b, a);
+                        db.engine().pool().setPageLsn(rid.pageId(), lsn);
+                    }
+                }
+            } finally {
+                db.engine().pool().endLogCritical();
             }
             for (Database.IndexEntry ie : db.indexesFor(u.table())) {
                 int ci = schema.columnIndex(ie.meta().column());
@@ -381,18 +428,17 @@ public final class Executor implements Expressions.Binder {
                     IndexKeys.delete(ie.tree(), ie.meta().keyType(), old[ci]);
                 }
             }
-            Rid newRid = t.update(rid, updated);
             for (Database.IndexEntry ie : db.indexesFor(u.table())) {
                 int ci = schema.columnIndex(ie.meta().column());
                 if (!IndexKeys.sameValue(ie.meta().keyType(), old[ci], updated[ci])) {
                     IndexKeys.insert(ie.tree(), ie.meta().keyType(), updated[ci], newRid);
                 }
             }
+            final Rid undoRid = newRid;
             if (s != null) {
-                s.pinPage(newRid.pageId());
                 s.undoActions.add(() -> {
-                    if (rowExists(t, newRid)) {
-                        Rid back = t.update(newRid, old);
+                    if (rowExists(t, undoRid)) {
+                        Rid back = t.update(undoRid, old);
                         for (Database.IndexEntry ie : db.indexesFor(u.table())) {
                             int ci = schema.columnIndex(ie.meta().column());
                             IndexKeys.delete(ie.tree(), ie.meta().keyType(), updated[ci]);
@@ -400,6 +446,7 @@ public final class Executor implements Expressions.Binder {
                         }
                     }
                 });
+                if (migrated) s.trackNewPage(newRid.pageId(), t.prevPageId(newRid.pageId()));
             }
         }
         return message(hits.size() + " 行已更新");
@@ -429,13 +476,19 @@ public final class Executor implements Expressions.Binder {
         for (int i = 0; i < hits.size(); i++) {
             Rid rid = hits.get(i);
             Object[] old = oldRows.get(i);
-            if (s != null) {
-                s.pinPage(rid.pageId());
-                db.wal().append(WalLog.DELETE, s.txnId, d.table(), rid.pageId(), rid.slot(),
-                        new minidb.storage.RowCodec(schema).encode(old), null);
+            db.engine().pool().beginLogCritical();
+            long lsn = 0;
+            try {
+                if (s != null) {
+                    lsn = db.wal().append(WalLog.DELETE, s.txnId, d.table(), rid.pageId(), rid.slot(),
+                            new minidb.storage.RowCodec(schema).encode(old), null);
+                }
+                maintainIndexesOnDelete(d.table(), rid, old, schema);
+                t.delete(rid);
+                if (lsn > 0) db.engine().pool().setPageLsn(rid.pageId(), lsn);
+            } finally {
+                db.engine().pool().endLogCritical();
             }
-            maintainIndexesOnDelete(d.table(), rid, old, schema);
-            t.delete(rid);
             if (s != null) {
                 s.undoActions.add(() -> {
                     if (!rowExists(t, rid)) {

@@ -36,6 +36,26 @@ public final class BufferPool implements AutoCloseable {
     }
 
     public void setFlushHook(FlushHook hook) { this.flushHook = hook; }
+
+    // ---- 日志临界区（steal 协议）----
+    // 写路径在临界区内完成 {修改页 + 追加 WAL}，期间其他线程的淘汰被挂起，
+    // 保证任何脏页落盘前其 WAL 记录必已追加（WAL 先写）。
+    private final java.util.Set<Thread> logWriters = new java.util.HashSet<>();
+
+    /** 进入日志临界区（可重入；同线程嵌套安全）。 */
+    public void beginLogCritical() {
+        synchronized (this) {
+            logWriters.add(Thread.currentThread());
+        }
+    }
+
+    /** 退出日志临界区。 */
+    public void endLogCritical() {
+        synchronized (this) {
+            logWriters.remove(Thread.currentThread());
+            notifyAll();
+        }
+    }
     public int capacity() { return capacity; }
     public synchronized int size() { return pool.size(); }
     public synchronized long hits() { return hits; }
@@ -52,7 +72,12 @@ public final class BufferPool implements AutoCloseable {
             return p;
         }
         misses++;
-        if (pool.size() >= capacity) evictOne();
+        try {
+            if (pool.size() >= capacity) evictOne();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new MiniDbException(MiniDbException.Code.LOCK, "取页等待日志临界区被中断", e);
+        }
         p = new Page(pageId);
         byte[] tmp = new byte[Page.SIZE];
         disk.readPage(pageId, tmp);
@@ -70,6 +95,12 @@ public final class BufferPool implements AutoCloseable {
         p.decPin();
     }
 
+    /** 页 LSN 回填（max 语义；页不在池中则忽略）——DML 追加日志后调用。 */
+    public synchronized void setPageLsn(int pageId, long lsn) {
+        Page p = pool.get(pageId);
+        if (p != null) p.setPageLsn(lsn);
+    }
+
     /** 便捷用法：在回调里使用页，结束自动 unpin。 */
     public <T> T withPage(int pageId, boolean dirty, java.util.function.Function<Page, T> fn) {
         Page p = getPage(pageId);
@@ -80,7 +111,10 @@ public final class BufferPool implements AutoCloseable {
         }
     }
 
-    private void evictOne() {
+    private void evictOne() throws InterruptedException {
+        // 其他写线程处于日志临界区时挂起淘汰（自己不受限，避免自死锁）
+        Thread cur = Thread.currentThread();
+        while (!logWriters.contains(cur) && !logWriters.isEmpty()) wait();
         Iterator<Map.Entry<Integer, Page>> it = pool.entrySet().iterator();
         while (it.hasNext()) {
             Page victim = it.next().getValue();

@@ -44,7 +44,14 @@ public final class Page {
                     "页 " + pageId + " unpin 次数超过 pin 次数");
         pinCount--;
     }
-    void setPageLsn(long lsn) { this.pageLsn = lsn; }
+    /** 写入页 LSN（max 语义：并发修改同页时只前进不回退），并写穿透到页头字节。 */
+    public void setPageLsn(long lsn) {
+        if (lsn > pageLsn) {
+            pageLsn = lsn;
+            minidb.common.Bytes.putLong(data, TablePageHeader.OFF_PAGE_LSN, pageLsn);
+            dirty = true;
+        }
+    }
 
     void loadFrom(byte[] src, int len) {
         java.util.Arrays.fill(data, (byte) 0);

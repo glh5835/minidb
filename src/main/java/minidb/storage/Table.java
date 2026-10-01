@@ -35,6 +35,9 @@ public interface Table {
     /** 供上层调试/统计 */
     int pageCount();
 
+    /** 返回指定页在表页链中的前驱页号（0 = 无）；用于提交时 mini-force 链前驱。 */
+    int prevPageId(int pageId);
+
     /** 页内空间统计接口（阶段2+ 调试用） */
     long totalFreeBytes();
 }

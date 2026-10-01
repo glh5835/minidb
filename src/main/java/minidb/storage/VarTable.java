@@ -244,6 +244,20 @@ public final class VarTable extends BaseTable {
         Page p = pool.getPage(rid.pageId());
         try {
             byte[] d = p.data();
+            // 槽目录扩展：重放时磁盘页可能落后于运行时（新槽未落盘），按需补建空闲槽
+            short ns = TablePageHeader.numSlots(d);
+            if (rid.slot() >= ns) {
+                short ff = TablePageHeader.firstFree(d);
+                for (int i = ns; i <= rid.slot(); i++) {
+                    writeSlot(d, i, ff, (short) 0);
+                    ff = (short) i;
+                }
+                TablePageHeader.firstFree(d, ff);
+                TablePageHeader.numSlots(d, (short) (rid.slot() + 1));
+                TablePageHeader.freeLow(d, (short) (TablePageHeader.freeLow(d) + 4 * (rid.slot() + 1 - ns)));
+                TablePageHeader.totalFree(d, TablePageHeader.totalFree(d) - 4 * (rid.slot() + 1 - ns));
+                d = p.data();
+            }
             if (rid.slot() >= TablePageHeader.numSlots(d) || slotLen(d, rid.slot()) != 0)
                 throw new MiniDbException(MiniDbException.Code.RECORD, "恢复目标槽非空: " + rid);
             // 从空闲链摘出该槽
