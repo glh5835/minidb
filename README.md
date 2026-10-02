@@ -12,13 +12,14 @@
 | 4 | 200 条端到端 SQL 测试 + 100 万行压测 + JMH（见 [PERF.md](PERF.md)） | ✅ 完成 |
 | 5 | WAL + 2PL + 死锁检测 + 崩溃恢复 | ✅ 完成 |
 | 6 | JDBC 驱动 + 纯 JDBC Demo | ✅ 完成 |
+| 增强 | Hash Join / 变长键 B+ 树（VARCHAR 索引）/ steal+no-force 恢复 | ✅ 完成 |
 
-**331 项测试全绿**。设计文档见 [docs/](docs/)（每层一篇 + 踩坑总结）。
+**350 项测试全绿**。设计文档见 [docs/](docs/)（每层一篇 + 踩坑总结）。
 
 ## 快速开始
 
 ```bash
-mvn test                                   # 全量测试（331 项）
+mvn test                                   # 全量测试（350 项）
 
 # SQL REPL（阶段 3 起支持完整 SQL 子集）
 java -cp target/classes minidb.repl.Repl
@@ -33,7 +34,8 @@ REPL 同时保留阶段 1 的存储层白盒命令（`.open/.create/.insert/.sca
 
 ```sql
 CREATE TABLE [IF NOT EXISTS] t (id INT PRIMARY KEY, name VARCHAR(20), score DOUBLE);
-CREATE INDEX idx ON t(id);                       DROP INDEX idx;  DROP TABLE t;
+CREATE INDEX idx ON t(id);                       -- INT/BIGINT/VARCHAR(≤255) 单列唯一索引
+CREATE INDEX idx2 ON t(name);                    -- VARCHAR 索引：等值/范围/前缀走索引
 INSERT INTO t VALUES (1,'a',1.5), (2,'b',2.5);    -- 支持列清单与多行
 UPDATE t SET score = score + 1 WHERE id = 1;
 DELETE FROM t WHERE name LIKE 'a%';
@@ -55,12 +57,12 @@ BEGIN; ... COMMIT; / ROLLBACK;                    -- 显式事务
 | 层 | 要点 | 文档 |
 |----|------|------|
 | 存储 | 4KB 页 + 空闲位图；BufferPool LRU/脏页/pin；定长槽位表 + 变长 slotted page；Catalog 目录链 | [01](docs/01-存储层设计.md) |
-| B+ 树 | 节点即页（叶 255 / 内部 338 fanout），经缓冲池读写；分裂/借位/合并；开闭边界范围扫描；10 万 key 对拍 TreeMap | [02](docs/02-B+树索引设计.md) |
+| B+ 树 | **变长键双端布局**（键 ≤255B，INT 编码 8B/VARCHAR 直存 UTF-8）；按需预分裂 + 字节均衡；开闭边界范围扫描；long/String 双门面 10 万键对拍 TreeMap | [02](docs/02-B+树索引设计.md) |
 | SQL 解析 | 手写 Lexer（77 词元）+ 递归下降 Parser；record + sealed AST；fail-fast 错误带位置 | [03](docs/03-SQL解析器设计.md) |
-| 执行引擎 | 火山模型 11 算子；计划期表达式编译；哈希聚合 + AST 改写；子查询物化/重放双路径；极简代价优化器（索引选择 + 贪心 JOIN 序 + 谓词下推） | [04](docs/04-执行引擎与优化器设计.md) |
-| 事务恢复 | WAL（逻辑日志）+ 严格 2PL + 等待图死锁检测；no-steal/force-at-commit → 恢复=一遍扫描+条件 undo；随机截断断电模拟；20 线程 10 万次转账守恒 | [05](docs/05-事务与崩溃恢复设计.md) |
+| 执行引擎 | 火山模型 12 算子（含 **HashJoinExec**：等值 ON 自动选用，2万×5千等值连接 ≈1900×）；常量折叠；计划期表达式编译；哈希聚合 + AST 改写；极简代价优化器（索引选择 + 贪心 JOIN 序 + 谓词下推） | [04](docs/04-执行引擎与优化器设计.md) |
+| 事务恢复 | WAL + 严格 2PL + 等待图死锁检测；**steal + no-force**（日志临界区 + FlushHook/syncUpTo + pageLsn）；恢复 = redo + undo 两遍条件重放；随机截断断电模拟；20 线程 10 万次转账守恒（no-force 后 9.9s） | [05](docs/05-事务与崩溃恢复设计.md) |
 | JDBC | 标准驱动 ServiceLoader 注册；Statement/PreparedStatement/ResultSet/MetaData；参数文本化绑定 + 字符串转义；35 项测试 | [06](docs/06-JDBC驱动设计.md) |
-| 复盘 | 16 个真实踩坑记录（含 WAL 读不出的重大发现） | [07](docs/07-从零写数据库：我踩过的坑.md) |
+| 复盘 | 19 个真实踩坑记录（含 WAL 读不出的重大发现、变长键布局三轮调试） | [07](docs/07-从零写数据库：我踩过的坑.md) |
 
 ## 性能摘录（详见 [PERF.md](PERF.md)）
 
@@ -72,6 +74,9 @@ BEGIN; ... COMMIT; / ROLLBACK;                    -- 显式事务
 | 点查 走索引 vs 全表扫描 | 0.055 ms vs 45 ms（**≈818×**） |
 | 范围查 1000 行 走索引 vs 扫描 | 0.222 ms vs 42 ms（≈189×） |
 | JMH SQL 点查端到端 | 1.551 µs/op |
+| Hash Join 2万×5千等值连接 | 13 ms（纯 NLJ 同规模 25.2 s，≈1900×） |
+| 小事务提交（2 UPDATE + commit，fsync 关） | ≈8,700 事务/秒 |
+| 转账压测 20 线程×10 万次（守恒） | 9.9 s（force 协议时代 ≈110 s） |
 
 ## 阶段 1：存储层
 
@@ -100,10 +105,10 @@ BEGIN; ... COMMIT; / ROLLBACK;                    -- 显式事务
 ## 测试
 
 ```bash
-mvn test    # 331 项全绿
+mvn test    # 350 项全绿
 ```
 
-覆盖：字节编解码边界、磁盘 IO 故障、缓冲池 LRU/pin/脏页、位图链跨页、定长/变长表边界（VARCHAR 超长、空洞压缩、页回收）、目录溢出、B+ 树对 TreeMap 10 万键对拍（含删 5 万再对拍）、词法/语法 40 项结构断言、执行器 52 项 + 200 条端到端 SQL 脚本、锁/隔离/恢复/WAL 33 项（含 WAL 记录往返与残缺尾部自愈、DDL 刷盘后未提交 DML 的恢复撤销、随机截断断电模拟、20 线程 10 万次转账总额守恒）、JDBC 35 项。
+覆盖：字节编解码边界、磁盘 IO 故障、缓冲池 LRU/pin/脏页/日志临界区、位图链跨页、定长/变长表边界（VARCHAR 超长、空洞压缩、页回收）、目录溢出、B+ 树 long/String 双门面各 10 万键对拍 TreeMap（含删 5 万再对拍、CJK/前缀键）、词法/语法 40 项结构断言、执行器 60 项（含 Hash Join 语义 8 项）+ 200 条端到端 SQL 脚本、锁/隔离/恢复/WAL 36 项（含 steal 淘汰、no-force redo、迁移 UPDATE 双向、WAL 往返与残缺尾自愈、随机截断断电、20 线程转账守恒）、JDBC 35 项。
 
 ## 文件布局
 
