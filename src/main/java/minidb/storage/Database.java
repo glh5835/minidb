@@ -40,10 +40,17 @@ public final class Database implements AutoCloseable {
         // 崩溃恢复：redo + undo（协议见 Recovery 注释）
         java.util.List<minidb.wal.WalLog.Rec> records = wal.readAll();
         if (!records.isEmpty()) {
-            minidb.wal.Recovery.recover(this, records);
+            this.lastRecoveryReport = minidb.wal.Recovery.recover(this, records);
             wal.truncate();
             engine.flush();
         }
+    }
+
+    /** 本次打开时真实执行的恢复报告（无恢复则为 null）；Studio 恢复实验展示用。 */
+    private volatile minidb.wal.Recovery.RecoveryReport lastRecoveryReport;
+
+    public minidb.wal.Recovery.RecoveryReport recoveryReport() {
+        return lastRecoveryReport;
     }
 
     private static java.nio.file.Path walPath(java.nio.file.Path dbFile) {
@@ -154,6 +161,7 @@ public final class Database implements AutoCloseable {
             cur = next;
         }
         persistCatalog();
+        engine.flush(); // DDL 直接落盘（DDL 不走事务日志）
     }
 
     // ---------- 索引 ----------
@@ -204,6 +212,7 @@ public final class Database implements AutoCloseable {
                 te.meta().firstPage(), append(te.meta().indexes(), entry.meta())), te.table());
         tables.put(tableName, updated);
         persistCatalog();
+        engine.flush(); // DDL 直接落盘（DDL 不走事务日志）
         return entry;
     }
 
@@ -221,6 +230,7 @@ public final class Database implements AutoCloseable {
         tables.put(ie.tableName(), new TableEntry(new Catalog.Entry(
                 ie.tableName(), te.meta().schema(), te.meta().firstPage(), remaining), te.table()));
         persistCatalog();
+        engine.flush(); // DDL 直接落盘（DDL 不走事务日志）
     }
 
     public synchronized BPlusTree getIndex(String indexName) {

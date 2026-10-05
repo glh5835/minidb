@@ -4,7 +4,7 @@ package minidb.common;
 public class MiniDbException extends RuntimeException {
     public enum Code {
         IO, PAGE_INVALID, BUFFER_FULL, SCHEMA, RECORD, CATALOG, BTREE,
-        PARSE, EXEC, TXN, DEADLOCK, LOCK, WAL, JDBC
+        PARSE, EXEC, TXN, DEADLOCK, LOCK, WAL, JDBC, UNIQUE
     }
 
     public final Code code;

@@ -63,4 +63,11 @@ public final class Page {
     public Type type() {
         return Type.of(data[TablePageHeader.OFF_TYPE]);
     }
+
+    /** 容错版类型读取：META 等系统页页首无类型字节（是魔数），返回 null 而不抛异常。 */
+    public Type typeOrNull() {
+        byte b = data[TablePageHeader.OFF_TYPE];
+        for (Type t : Type.values()) if (t.id == b) return t;
+        return null;
+    }
 }

@@ -3,6 +3,7 @@ package minidb.btree;
 import minidb.common.MiniDbException;
 import minidb.common.Rid;
 import minidb.storage.BufferPool;
+import minidb.storage.IndexMeta;
 import minidb.storage.Page;
 import minidb.storage.StorageEngine;
 
@@ -627,6 +628,57 @@ public final class BPlusTree {
     }
 
     // ---------- 统计 ----------
+
+    /** 一个节点的只读快照（Studio B+ 树可视化用）。 */
+    public record NodeSnapshot(int pageId, String kind, java.util.List<String> keys,
+                               java.util.List<Integer> children, int next, int prev,
+                               java.util.List<String> rids, int usedBytes, int totalBytes) {}
+
+    /** 整棵树的只读快照（层序）。前端只做 Snapshot → SVG，禁止自行解释数据文件。 */
+    public record TreeSnapshot(int rootPage, int height, int keyType, List<NodeSnapshot> nodes) {}
+
+    /**
+     * 只读快照整棵树。keyType：IndexMeta.KEY_LONG / KEY_STRING，决定键的解码显示。
+     * 逐节点 pin 读取（经缓冲池，走真实页数据），不修改任何状态。
+     */
+    public TreeSnapshot snapshot(String keyType) {
+        List<NodeSnapshot> nodes = new ArrayList<>();
+        collectSnapshot(root, keyType, nodes);
+        return new TreeSnapshot(root, height,
+                IndexMeta.KEY_STRING.equals(keyType) ? 1 : 0, nodes);
+    }
+
+    private void collectSnapshot(int pageId, String keyType, List<NodeSnapshot> out) {
+        BTreeNode n = BTreeNode.pin(pool, pageId);
+        try {
+            int nk = n.numKeys();
+            java.util.List<String> keys = new ArrayList<>(nk);
+            for (int i = 0; i < nk; i++) keys.add(decodeKey(n.key(i), keyType));
+            java.util.List<Integer> children = null;
+            java.util.List<String> rids = null;
+            if (n.isLeaf()) {
+                rids = new ArrayList<>(nk);
+                for (int i = 0; i < nk; i++) rids.add(n.value(i).toString());
+            } else {
+                children = new ArrayList<>(nk + 1);
+                for (int i = 0; i <= nk; i++) children.add(n.child(i));
+            }
+            out.add(new NodeSnapshot(pageId, n.isLeaf() ? "LEAF" : "INTERNAL",
+                    keys, children, n.next(), n.prev(), rids,
+                    n.usedPageBytes(), Page.SIZE));
+            if (!n.isLeaf())
+                for (int i = 0; i <= nk; i++) collectSnapshot(n.child(i), keyType, out);
+        } finally {
+            n.unpin(false);
+        }
+    }
+
+    /** 树键字节 → 显示文本：LONG 解码为数值，STRING 按 UTF-8。 */
+    public static String decodeKey(byte[] stored, String keyType) {
+        if (IndexMeta.KEY_STRING.equals(keyType))
+            return new String(stored, StandardCharsets.UTF_8);
+        return String.valueOf(decodeLong(stored));
+    }
 
     /** 释放整棵树的所有节点页（drop 索引用）。调用后本树不可再使用。 */
     public void drop() {

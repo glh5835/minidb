@@ -310,7 +310,10 @@ public final class Executor implements Expressions.Binder {
     private void maintainIndexesOnInsert(String table, Rid rid, Object[] values, Schema schema) {
         for (Database.IndexEntry ie : db.indexesFor(table)) {
             int ci = schema.columnIndex(ie.meta().column());
-            IndexKeys.insert(ie.tree(), ie.meta().keyType(), values[ci], rid);
+            if (!IndexKeys.insert(ie.tree(), ie.meta().keyType(), values[ci], rid))
+                throw new MiniDbException(MiniDbException.Code.UNIQUE,
+                        "唯一索引 " + ie.meta().name() + " 要求列 " + ie.meta().column()
+                                + " 的值唯一，重复值: " + values[ci]);
         }
     }
 
@@ -393,63 +396,74 @@ public final class Executor implements Expressions.Binder {
                 Object v = valueNodes.get(i).eval(old);
                 updated[colIdx[i]] = coerce(v, schema.columns().get(colIdx[i]));
             }
-            // 日志临界区：{页修改 → WAL 追加 → pageLsn 回填} 对其他线程的淘汰原子。
-            // VarTable 迁移（update 返回新 RID）改记 DELETE+INSERT 两条日志：
-            // 逻辑重放与撤销都以稳定 RID 为锚，恢复语义天然正确。
-            boolean migrated = false;
-            Rid newRid = rid;
-            db.engine().pool().beginLogCritical();
-            try {
-                newRid = t.update(rid, updated);
-                migrated = !newRid.equals(rid);
-                if (s != null) {
-                    byte[] b = new minidb.storage.RowCodec(schema).encode(old);
-                    byte[] a = new minidb.storage.RowCodec(schema).encode(updated);
-                    if (migrated) {
-                        long lsnDel = db.wal().append(WalLog.DELETE, s.txnId, u.table(),
-                                rid.pageId(), rid.slot(), b, null);
-                        long lsnIns = db.wal().append(WalLog.INSERT, s.txnId, u.table(),
-                                newRid.pageId(), newRid.slot(), null, a);
-                        db.engine().pool().setPageLsn(rid.pageId(), lsnDel);
-                        db.engine().pool().setPageLsn(newRid.pageId(), lsnIns);
-                    } else {
-                        long lsn = db.wal().append(WalLog.UPDATE, s.txnId, u.table(),
-                                rid.pageId(), rid.slot(), b, a);
-                        db.engine().pool().setPageLsn(rid.pageId(), lsn);
-                    }
-                }
-            } finally {
-                db.engine().pool().endLogCritical();
-            }
-            for (Database.IndexEntry ie : db.indexesFor(u.table())) {
-                int ci = schema.columnIndex(ie.meta().column());
-                // 索引列值未变时不动索引（避免并发下同键删/插窗口让其他事务的索引扫描漏行）
-                if (!IndexKeys.sameValue(ie.meta().keyType(), old[ci], updated[ci])) {
-                    IndexKeys.delete(ie.tree(), ie.meta().keyType(), old[ci]);
-                }
-            }
-            for (Database.IndexEntry ie : db.indexesFor(u.table())) {
-                int ci = schema.columnIndex(ie.meta().column());
-                if (!IndexKeys.sameValue(ie.meta().keyType(), old[ci], updated[ci])) {
-                    IndexKeys.insert(ie.tree(), ie.meta().keyType(), updated[ci], newRid);
-                }
-            }
-            final Rid undoRid = newRid;
-            if (s != null) {
-                s.undoActions.add(() -> {
-                    if (rowExists(t, undoRid)) {
-                        Rid back = t.update(undoRid, old);
-                        for (Database.IndexEntry ie : db.indexesFor(u.table())) {
-                            int ci = schema.columnIndex(ie.meta().column());
-                            IndexKeys.delete(ie.tree(), ie.meta().keyType(), updated[ci]);
-                            IndexKeys.insert(ie.tree(), ie.meta().keyType(), old[ci], back);
-                        }
-                    }
-                });
-                if (migrated) s.trackNewPage(newRid.pageId(), t.prevPageId(newRid.pageId()));
-            }
+            applyRowUpdate(s, u.table(), t, schema, rid, old, updated);
         }
         return message(hits.size() + " 行已更新");
+    }
+
+    /**
+     * 对单行应用更新：日志临界区 {页修改 → WAL 追加 → pageLsn 回填} + 索引维护 + undo 栈。
+     * VarTable 迁移（update 返回新 RID）改记 DELETE+INSERT 两条日志：
+     * 逻辑重放与撤销都以稳定 RID 为锚，恢复语义天然正确。返回（可能迁移后的）新 RID。
+     */
+    private Rid applyRowUpdate(TxnSession s, String tableName, Table t, Schema schema,
+                               Rid rid, Object[] old, Object[] updated) {
+        boolean migrated = false;
+        Rid newRid = rid;
+        db.engine().pool().beginLogCritical();
+        try {
+            newRid = t.update(rid, updated);
+            migrated = !newRid.equals(rid);
+            if (s != null) {
+                byte[] b = new minidb.storage.RowCodec(schema).encode(old);
+                byte[] a = new minidb.storage.RowCodec(schema).encode(updated);
+                if (migrated) {
+                    long lsnDel = db.wal().append(WalLog.DELETE, s.txnId, tableName,
+                            rid.pageId(), rid.slot(), b, null);
+                    long lsnIns = db.wal().append(WalLog.INSERT, s.txnId, tableName,
+                            newRid.pageId(), newRid.slot(), null, a);
+                    db.engine().pool().setPageLsn(rid.pageId(), lsnDel);
+                    db.engine().pool().setPageLsn(newRid.pageId(), lsnIns);
+                } else {
+                    long lsn = db.wal().append(WalLog.UPDATE, s.txnId, tableName,
+                            rid.pageId(), rid.slot(), b, a);
+                    db.engine().pool().setPageLsn(rid.pageId(), lsn);
+                }
+            }
+        } finally {
+            db.engine().pool().endLogCritical();
+        }
+        for (Database.IndexEntry ie : db.indexesFor(tableName)) {
+            int ci = schema.columnIndex(ie.meta().column());
+            // 索引列值未变时不动索引（避免并发下同键删/插窗口让其他事务的索引扫描漏行）
+            if (!IndexKeys.sameValue(ie.meta().keyType(), old[ci], updated[ci])) {
+                IndexKeys.delete(ie.tree(), ie.meta().keyType(), old[ci]);
+            }
+        }
+        for (Database.IndexEntry ie : db.indexesFor(tableName)) {
+            int ci = schema.columnIndex(ie.meta().column());
+            if (!IndexKeys.sameValue(ie.meta().keyType(), old[ci], updated[ci])) {
+                if (!IndexKeys.insert(ie.tree(), ie.meta().keyType(), updated[ci], newRid))
+                    throw new MiniDbException(MiniDbException.Code.UNIQUE,
+                            "唯一索引 " + ie.meta().name() + " 要求列 " + ie.meta().column()
+                                    + " 的值唯一，重复值: " + updated[ci]);
+            }
+        }
+        final Rid undoRid = newRid;
+        if (s != null) {
+            s.undoActions.add(() -> {
+                if (rowExists(t, undoRid)) {
+                    Rid back = t.update(undoRid, old);
+                    for (Database.IndexEntry ie : db.indexesFor(tableName)) {
+                        int ci = schema.columnIndex(ie.meta().column());
+                        IndexKeys.delete(ie.tree(), ie.meta().keyType(), updated[ci]);
+                        IndexKeys.insert(ie.tree(), ie.meta().keyType(), old[ci], back);
+                    }
+                }
+            });
+            if (migrated) s.trackNewPage(newRid.pageId(), t.prevPageId(newRid.pageId()));
+        }
+        return newRid;
     }
 
     private Result runDelete(Ast.DeleteStmt d, TxnSession s) {
@@ -474,34 +488,222 @@ public final class Executor implements Expressions.Binder {
             }
         }
         for (int i = 0; i < hits.size(); i++) {
-            Rid rid = hits.get(i);
-            Object[] old = oldRows.get(i);
-            db.engine().pool().beginLogCritical();
-            long lsn = 0;
-            try {
-                if (s != null) {
-                    lsn = db.wal().append(WalLog.DELETE, s.txnId, d.table(), rid.pageId(), rid.slot(),
-                            new minidb.storage.RowCodec(schema).encode(old), null);
-                }
-                maintainIndexesOnDelete(d.table(), rid, old, schema);
-                t.delete(rid);
-                if (lsn > 0) db.engine().pool().setPageLsn(rid.pageId(), lsn);
-            } finally {
-                db.engine().pool().endLogCritical();
-            }
-            if (s != null) {
-                s.undoActions.add(() -> {
-                    if (!rowExists(t, rid)) {
-                        t.restoreAt(rid, old);
-                        for (Database.IndexEntry ie : db.indexesFor(d.table())) {
-                            int ci = schema.columnIndex(ie.meta().column());
-                            IndexKeys.insert(ie.tree(), ie.meta().keyType(), old[ci], rid);
-                        }
-                    }
-                });
-            }
+            applyRowDelete(s, d.table(), t, schema, hits.get(i), oldRows.get(i));
         }
         return message(hits.size() + " 行已删除");
+    }
+
+    /** 对单行执行删除：日志临界区 {WAL → 索引维护 → 页修改 → pageLsn 回填} + undo 栈。 */
+    private void applyRowDelete(TxnSession s, String tableName, Table t, Schema schema,
+                                Rid rid, Object[] old) {
+        db.engine().pool().beginLogCritical();
+        long lsn = 0;
+        try {
+            if (s != null) {
+                lsn = db.wal().append(WalLog.DELETE, s.txnId, tableName, rid.pageId(), rid.slot(),
+                        new minidb.storage.RowCodec(schema).encode(old), null);
+            }
+            maintainIndexesOnDelete(tableName, rid, old, schema);
+            t.delete(rid);
+            if (lsn > 0) db.engine().pool().setPageLsn(rid.pageId(), lsn);
+        } finally {
+            db.engine().pool().endLogCritical();
+        }
+        if (s != null) {
+            s.undoActions.add(() -> {
+                if (!rowExists(t, rid)) {
+                    t.restoreAt(rid, old);
+                    for (Database.IndexEntry ie : db.indexesFor(tableName)) {
+                        int ci = t.schema().columnIndex(ie.meta().column());
+                        IndexKeys.insert(ie.tree(), ie.meta().keyType(), old[ci], rid);
+                    }
+                }
+            });
+        }
+    }
+
+    // ---------------- 数据浏览器（RID 精确操作，复用真实 DML 机制） ----------------
+
+    /** 分页浏览结果：行 RID 与行值（页大小由调用方约束，内核侧分页）。 */
+    public record BrowsePage(List<Rid> rids, List<Object[]> rows) {}
+
+    private static final int MAX_BROWSE_PAGE = 500;
+
+    /**
+     * 内核侧分页浏览：where 为 AST 谓词（可 null），sortColumn 为物理列名（可 null）。
+     * 无排序时流式跳过 offset 行、取满 limit 即停止（只按需访问页，不整表加载）；
+     * 有排序时在内核内完成排序后切片（排序本身需要看到全部匹配行）。
+     */
+    public BrowsePage browse(String table, Ast.Expr where, String sortColumn, boolean desc,
+                             int offset, int limit) {
+        if (offset < 0) throw new MiniDbException(MiniDbException.Code.EXEC, "偏移量不能为负");
+        if (limit <= 0 || limit > MAX_BROWSE_PAGE)
+            throw new MiniDbException(MiniDbException.Code.EXEC,
+                    "每页行数需在 1.." + MAX_BROWSE_PAGE);
+        Table t = db.getTable(table);
+        Schema schema = t.schema();
+        String alias = schema.tableName();
+        List<String> scope = schema.columns().stream().map(c -> alias + "." + c.name()).toList();
+        Expressions.EvalNode pred = where == null ? null : Expressions.bind(where, scope, this);
+        int sortIdx = -1;
+        if (sortColumn != null && !sortColumn.isBlank()) {
+            sortIdx = schema.columnIndex(sortColumn);
+            if (sortIdx < 0)
+                throw new MiniDbException(MiniDbException.Code.SCHEMA,
+                        "表 " + alias + " 没有列 " + sortColumn);
+        }
+        ExecOp scan = buildScanForWrite(t, alias, where);
+        List<Rid> rids = new ArrayList<>();
+        List<Object[]> rows = new ArrayList<>();
+        int skipped = 0;
+        try {
+            scan.open();
+            Object[] r;
+            while ((r = scan.next()) != null) {
+                if (pred != null && !Expressions.truthy(pred.eval(r))) continue;
+                Rid rid = ridOf(scan);
+                if (sortIdx < 0) {
+                    if (skipped < offset) { skipped++; continue; }
+                    rids.add(rid);
+                    rows.add(r);
+                    if (rows.size() >= limit) break;
+                } else {
+                    rids.add(rid);
+                    rows.add(r);
+                }
+            }
+        } finally {
+            ExecOp.closeQuietly(scan);
+        }
+        if (sortIdx >= 0) {
+            Integer[] order = new Integer[rows.size()];
+            for (int i = 0; i < order.length; i++) order[i] = i;
+            final int col = sortIdx;
+            java.util.Arrays.sort(order, (a, b) -> {
+                Object va = rows.get(a)[col], vb = rows.get(b)[col];
+                int c;
+                if (va == null && vb == null) c = 0;
+                else if (va == null) c = 1;   // NULL 排最后（升序）
+                else if (vb == null) c = -1;
+                else c = ((java.lang.Comparable<Object>) va).compareTo(vb);
+                return desc ? -c : c;
+            });
+            List<Rid> sr = new ArrayList<>(rids.size());
+            List<Object[]> srow = new ArrayList<>(rows.size());
+            int end = Math.min(rows.size(), offset + limit);
+            for (int i = Math.min(offset, end); i < end; i++) {
+                sr.add(rids.get(order[i]));
+                srow.add(rows.get(order[i]));
+            }
+            return new BrowsePage(sr, srow);
+        }
+        return new BrowsePage(rids, rows);
+    }
+
+    /** 按 RID 读一行；记录已不存在时给出可操作的提示。 */
+    public Object[] getRowByRid(String table, Rid rid) {
+        Table t = db.getTable(table);
+        try {
+            return t.get(rid);
+        } catch (MiniDbException e) {
+            throw new MiniDbException(MiniDbException.Code.RECORD,
+                    "该记录已发生变化（RID " + rid + " 不存在），请刷新后重试", e);
+        }
+    }
+
+    /** 更新单行结果：oldRid → newRid（变长记录迁移时不同）。 */
+    public record UpdateRowResult(Rid oldRid, Rid newRid) {}
+
+    /** 精确插入一行（数据浏览器用）：完整走 WAL/行锁/索引/undo 机制，返回新 RID。 */
+    public Rid insertRow(String table, Object[] values, TxnSession session) {
+        Table t = db.getTable(table);
+        Schema schema = t.schema();
+        int n = schema.columns().size();
+        if (values == null || values.length != n)
+            throw new MiniDbException(MiniDbException.Code.RECORD,
+                    "期望 " + n + " 个值，得到 " + (values == null ? 0 : values.length));
+        Object[] coerced = new Object[n];
+        for (int i = 0; i < n; i++) coerced[i] = coerce(values[i], schema.columns().get(i));
+        boolean auto = session == null;
+        TxnSession s = auto ? begin(TxnSession.Isolation.READ_COMMITTED, false) : session;
+        try {
+            Rid rid = insertWithLog(s, t, coerced);
+            maintainIndexesOnInsert(table, rid, coerced, schema);
+            if (auto) commit(s);
+            return rid;
+        } catch (RuntimeException e) {
+            if (auto) {
+                try {
+                    rollback(s);
+                } catch (RuntimeException ignored) {
+                }
+            }
+            throw e;
+        }
+    }
+
+    /** 按 RID 精确更新一行（数据浏览器用）；记录迁移时返回 newRid != oldRid。 */
+    public UpdateRowResult updateRowByRid(String table, Rid rid, Object[] newValues,
+                                          TxnSession session) {
+        Table t = db.getTable(table);
+        Schema schema = t.schema();
+        int n = schema.columns().size();
+        if (newValues == null || newValues.length != n)
+            throw new MiniDbException(MiniDbException.Code.RECORD,
+                    "期望 " + n + " 个值，得到 " + (newValues == null ? 0 : newValues.length));
+        Object[] coerced = new Object[n];
+        for (int i = 0; i < n; i++) coerced[i] = coerce(newValues[i], schema.columns().get(i));
+        Object[] old;
+        try {
+            old = t.get(rid);
+        } catch (MiniDbException e) {
+            throw new MiniDbException(MiniDbException.Code.RECORD,
+                    "该记录已发生变化（RID " + rid + " 不存在），请刷新后重试", e);
+        }
+        boolean auto = session == null;
+        TxnSession s = auto ? begin(TxnSession.Isolation.READ_COMMITTED, false) : session;
+        try {
+            s.lockRow(table, rid, false);
+            Rid newRid = applyRowUpdate(s, table, t, schema, rid, old, coerced);
+            if (auto) commit(s);
+            return new UpdateRowResult(rid, newRid);
+        } catch (RuntimeException e) {
+            if (auto) {
+                try {
+                    rollback(s);
+                } catch (RuntimeException ignored) {
+                }
+            }
+            throw e;
+        }
+    }
+
+    /** 按 RID 精确删除一行（数据浏览器用）。 */
+    public void deleteRowByRid(String table, Rid rid, TxnSession session) {
+        Table t = db.getTable(table);
+        Schema schema = t.schema();
+        Object[] old;
+        try {
+            old = t.get(rid);
+        } catch (MiniDbException e) {
+            throw new MiniDbException(MiniDbException.Code.RECORD,
+                    "该记录已发生变化（RID " + rid + " 不存在），请刷新后重试", e);
+        }
+        boolean auto = session == null;
+        TxnSession s = auto ? begin(TxnSession.Isolation.READ_COMMITTED, false) : session;
+        try {
+            s.lockRow(table, rid, false);
+            applyRowDelete(s, table, t, schema, rid, old);
+            if (auto) commit(s);
+        } catch (RuntimeException e) {
+            if (auto) {
+                try {
+                    rollback(s);
+                } catch (RuntimeException ignored) {
+                }
+            }
+            throw e;
+        }
     }
 
     // ---------------- SELECT ----------------
@@ -526,7 +728,20 @@ public final class Executor implements Expressions.Binder {
     }
 
     public Result runSelect(Ast.SelectStmt s, TxnSession session) {
+        return runSelect(s, session, 0);
+    }
+
+    /**
+     * 带 {@code maxRows} 上限的查询（Studio 等入口用）：计划外层套 LimitExec，
+     * 最多物化 maxRows 行——避免大结果在内存中全量收集。maxRows<=0 表示不限制。
+     */
+    public Result runSelect(Ast.SelectStmt s, TxnSession session, int maxRows) {
         ExecOp plan = planSelect(s, session);
+        if (maxRows > 0) {
+            Long userLimit = s.limit();
+            if (userLimit == null || userLimit > maxRows)
+                plan = new LimitExec(plan, (long) maxRows, null);
+        }
         List<String> cols = plan.columns();
         List<Object[]> rows = new ArrayList<>();
         try {

@@ -31,33 +31,93 @@ import java.util.Set;
 public final class Recovery {
     private Recovery() {}
 
-    public static void recover(Database db, List<WalLog.Rec> records) {
+    /**
+     * 恢复过程报告（Studio WAL/恢复实验用）：真实记录每个 redo/undo 决策与结果。
+     * 只在显式传入收集时产生数据；常规恢复传 null，零额外开销。
+     */
+    public static final class RecoveryReport {
+        /** 一条恢复动作：phase=ANALYZE/REDO/UNDO；applied=是否真实应用到数据页。 */
+        public record Entry(long lsn, long txnId, String phase, String action, String table,
+                            int pageId, int slot, boolean applied, String detail) {}
+
+        private final List<Entry> entries = new ArrayList<>();
+        private final Set<Long> committed = new LinkedHashSet<>();
+        private final Set<Long> pending = new LinkedHashSet<>();
+
+        public List<Entry> entries() { return entries; }
+        public Set<Long> committedTxns() { return committed; }
+        public Set<Long> pendingTxns() { return pending; }
+
+        void analyzeCommit(long txnId) { committed.add(txnId); }
+        void analyzeDml(long txnId) {
+            if (!committed.contains(txnId)) pending.add(txnId);
+        }
+
+        void add(long lsn, long txnId, String phase, String action, String table,
+                 int pageId, int slot, boolean applied, String detail) {
+            entries.add(new Entry(lsn, txnId, phase, action, table, pageId, slot, applied, detail));
+        }
+    }
+
+    /** 常规恢复（Database 打开时自动调用）；返回真实恢复报告。 */
+    public static RecoveryReport recover(Database db, List<WalLog.Rec> records) {
+        return recover(db, records, new RecoveryReport());
+    }
+
+    /** 指定报告容器恢复；report 传 null 时行为与以前完全一致（不收集）。 */
+    public static RecoveryReport recover(Database db, List<WalLog.Rec> records, RecoveryReport report) {
         // pass 1：分析
         Map<Long, List<WalLog.Rec>> byTxn = new HashMap<>();
         Set<Long> committed = new LinkedHashSet<>();
         for (WalLog.Rec r : records) {
-            if (r.type() == WalLog.COMMIT) committed.add(r.txnId());
-            if (r.type() == WalLog.INSERT || r.type() == WalLog.DELETE || r.type() == WalLog.UPDATE)
+            if (r.type() == WalLog.COMMIT) {
+                committed.add(r.txnId());
+                if (report != null) {
+                    report.analyzeCommit(r.txnId());
+                    report.add(r.lsn(), r.txnId(), "ANALYZE", "COMMIT", "", -1, -1, true,
+                            "事务已提交，redo 保留");
+                }
+            }
+            if (r.type() == WalLog.INSERT || r.type() == WalLog.DELETE || r.type() == WalLog.UPDATE) {
                 byTxn.computeIfAbsent(r.txnId(), k -> new ArrayList<>()).add(r);
+            }
+        }
+        if (report != null) {
+            for (Long txn : byTxn.keySet())
+                if (!committed.contains(txn)) {
+                    report.pendingTxns().add(txn);
+                    report.add(-1, txn, "ANALYZE", "PENDING", "", -1, -1, true,
+                            "事务未提交，undo 阶段撤销");
+                }
         }
         // pass 2：redo（LSN 序条件重放全部 DML，含未提交）
-        for (WalLog.Rec r : records) redoRec(db, r);
+        for (WalLog.Rec r : records) redoRec(db, r, report);
         // pass 3：undo（未提交事务，逆序）
         for (Long txn : byTxn.keySet()) {
             if (committed.contains(txn)) continue;
             List<WalLog.Rec> ops = byTxn.get(txn);
             for (int i = ops.size() - 1; i >= 0; i--) {
-                undoRec(db, ops.get(i));
+                undoRec(db, ops.get(i), report);
             }
         }
+        return report;
     }
 
     /** 单条 DML 的条件 redo（幂等：磁盘状态已包含该记录效果则跳过）。 */
-    static void redoRec(Database db, WalLog.Rec r) {
+    static void redoRec(Database db, WalLog.Rec r, RecoveryReport report) {
+        if (r.type() != WalLog.INSERT && r.type() != WalLog.DELETE && r.type() != WalLog.UPDATE) {
+            if (report != null)
+                report.add(r.lsn(), r.txnId(), "REDO", name(r.type()), r.table(),
+                        r.pageId(), r.slot(), false, "非 DML 记录，无需操作");
+            return;
+        }
         Table t;
         try {
             t = db.getTable(r.table());
         } catch (MiniDbException e) {
+            if (report != null)
+                report.add(r.lsn(), r.txnId(), "REDO", name(r.type()), r.table(),
+                        r.pageId(), r.slot(), false, "表已删除，跳过");
             return; // 表在日志后被删除，忽略
         }
         RowCodec codec = new RowCodec(t.schema());
@@ -68,6 +128,11 @@ public final class Recovery {
                 if (!rowExists(t, rid)) {
                     t.restoreAt(rid, after);
                     indexInsert(db, r.table(), rid, after);
+                    if (report != null) report.add(r.lsn(), r.txnId(), "REDO", "INSERT",
+                            r.table(), r.pageId(), r.slot(), true, "重放插入 + 索引回补");
+                } else if (report != null) {
+                    report.add(r.lsn(), r.txnId(), "REDO", "INSERT", r.table(),
+                            r.pageId(), r.slot(), false, "行已存在，幂等跳过");
                 }
             }
             case WalLog.DELETE -> {
@@ -75,6 +140,11 @@ public final class Recovery {
                 if (rowMatches(t, rid, before)) {
                     t.delete(rid);
                     indexDelete(db, r.table(), before);
+                    if (report != null) report.add(r.lsn(), r.txnId(), "REDO", "DELETE",
+                            r.table(), r.pageId(), r.slot(), true, "重放删除 + 索引维护");
+                } else if (report != null) {
+                    report.add(r.lsn(), r.txnId(), "REDO", "DELETE", r.table(),
+                            r.pageId(), r.slot(), false, "行内容不一致，幂等跳过");
                 }
             }
             case WalLog.UPDATE -> {
@@ -84,6 +154,11 @@ public final class Recovery {
                     t.update(rid, after);
                     indexDelete(db, r.table(), before);
                     indexInsert(db, r.table(), rid, after);
+                    if (report != null) report.add(r.lsn(), r.txnId(), "REDO", "UPDATE",
+                            r.table(), r.pageId(), r.slot(), true, "重放更新 + 索引维护");
+                } else if (report != null) {
+                    report.add(r.lsn(), r.txnId(), "REDO", "UPDATE", r.table(),
+                            r.pageId(), r.slot(), false, "行内容不一致，幂等跳过");
                 }
             }
             default -> { /* BEGIN/COMMIT/ABORT 无操作 */ }
@@ -91,10 +166,19 @@ public final class Recovery {
     }
 
     /** 单条 DML 的条件 undo。 */
-    static void undoRec(Database db, WalLog.Rec r) {
+    static void undoRec(Database db, WalLog.Rec r, RecoveryReport report) {
+        if (r.type() != WalLog.INSERT && r.type() != WalLog.DELETE && r.type() != WalLog.UPDATE) {
+            if (report != null)
+                report.add(r.lsn(), r.txnId(), "UNDO", name(r.type()), r.table(),
+                        r.pageId(), r.slot(), false, "非 DML 记录，无需操作");
+            return;
+        }
         try {
             Table t = db.getTable(r.table());
         } catch (MiniDbException e) {
+            if (report != null)
+                report.add(r.lsn(), r.txnId(), "UNDO", name(r.type()), r.table(),
+                        r.pageId(), r.slot(), false, "表已删除，跳过");
             return; // 表在日志后被删除，忽略
         }
         Table t = db.getTable(r.table());
@@ -106,6 +190,11 @@ public final class Recovery {
                 if (rowMatches(t, rid, after)) {
                     t.delete(rid);
                     indexDelete(db, r.table(), after);
+                    if (report != null) report.add(r.lsn(), r.txnId(), "UNDO", "INSERT",
+                            r.table(), r.pageId(), r.slot(), true, "撤销插入（删行 + 索引清理）");
+                } else if (report != null) {
+                    report.add(r.lsn(), r.txnId(), "UNDO", "INSERT", r.table(),
+                            r.pageId(), r.slot(), false, "行不存在，幂等跳过");
                 }
             }
             case WalLog.DELETE -> {
@@ -113,6 +202,11 @@ public final class Recovery {
                 if (!rowExists(t, rid)) {
                     t.restoreAt(rid, before);
                     indexInsert(db, r.table(), rid, before);
+                    if (report != null) report.add(r.lsn(), r.txnId(), "UNDO", "DELETE",
+                            r.table(), r.pageId(), r.slot(), true, "撤销删除（原位恢复 + 索引回补）");
+                } else if (report != null) {
+                    report.add(r.lsn(), r.txnId(), "UNDO", "DELETE", r.table(),
+                            r.pageId(), r.slot(), false, "行已存在，幂等跳过");
                 }
             }
             case WalLog.UPDATE -> {
@@ -122,10 +216,28 @@ public final class Recovery {
                     Rid newRid = t.update(rid, before);
                     indexDelete(db, r.table(), after);
                     indexInsert(db, r.table(), newRid, before);
+                    if (report != null) report.add(r.lsn(), r.txnId(), "UNDO", "UPDATE",
+                            r.table(), r.pageId(), r.slot(), true,
+                            "撤销更新（恢复旧值，RID " + rid + " → " + newRid + "）");
+                } else if (report != null) {
+                    report.add(r.lsn(), r.txnId(), "UNDO", "UPDATE", r.table(),
+                            r.pageId(), r.slot(), false, "行内容不一致，幂等跳过");
                 }
             }
             default -> { /* BEGIN/COMMIT/ABORT 无操作 */ }
         }
+    }
+
+    private static String name(byte type) {
+        return switch (type) {
+            case WalLog.BEGIN -> "BEGIN";
+            case WalLog.INSERT -> "INSERT";
+            case WalLog.DELETE -> "DELETE";
+            case WalLog.UPDATE -> "UPDATE";
+            case WalLog.COMMIT -> "COMMIT";
+            case WalLog.ABORT -> "ABORT";
+            default -> "TYPE" + type;
+        };
     }
 
     static Object[] decode(RowCodec codec, byte[] bytes) {

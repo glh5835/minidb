@@ -3,9 +3,11 @@ package minidb.txn;
 import minidb.common.MiniDbException;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -132,5 +134,21 @@ public final class LockManager {
     public synchronized Set<Long> holdersOf(String key) {
         LockEntry e = locks.get(key);
         return e == null ? Set.of() : new HashSet<>(e.holders);
+    }
+
+    /** 一把锁的只读快照（Studio 锁等待图用）：持锁者 + 等待队列（FIFO 序）。 */
+    public record LockSnapshot(String key, List<Long> holders, String mode, List<Long> waiting) {}
+
+    /** 只读快照全部锁条目；不改任何状态。等待图 = 每个 waiting 事务 → 该锁 holders 的边。 */
+    public synchronized List<LockSnapshot> snapshot() {
+        List<LockSnapshot> out = new ArrayList<>();
+        for (Map.Entry<String, LockEntry> en : locks.entrySet()) {
+            LockEntry e = en.getValue();
+            List<Long> waiting = new ArrayList<>();
+            for (Waiter w : e.queue) waiting.add(w.txnId);
+            out.add(new LockSnapshot(en.getKey(), new ArrayList<>(e.holders),
+                    e.mode == null ? null : e.mode.name(), waiting));
+        }
+        return out;
     }
 }

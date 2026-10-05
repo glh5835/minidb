@@ -13,8 +13,38 @@
 | 5 | WAL + 2PL + 死锁检测 + 崩溃恢复 | ✅ 完成 |
 | 6 | JDBC 驱动 + 纯 JDBC Demo | ✅ 完成 |
 | 增强 | Hash Join / 变长键 B+ 树（VARCHAR 索引）/ steal+no-force 恢复 | ✅ 完成 |
+| **MiniDB Studio** | **本地 Web 工作台：可视化管理 + SQL 开发 + 内核观察 + 教学实验** | ✅ 完成 |
 
-**350 项测试全绿**。设计文档见 [docs/](docs/)（每层一篇 + 踩坑总结）。
+**369 项测试全绿**（内核 350 + Studio Web 层 19）。设计文档见 [docs/](docs/)（每层一篇 + 踩坑总结 + [Studio 文档](docs/studio/)）。
+
+## MiniDB Studio（Web 工作台）
+
+双击 **启动 MiniDB Studio.bat**（或先运行 build-studio.bat 构建）→ 浏览器自动打开
+<http://127.0.0.1:8080>（仅本机监听）：
+
+- **开始页**：创建/打开数据库、最近列表、示例数据库（school.db）、新用户引导
+- **数据浏览**：表列表 + 数据网格（内核侧分页/排序/筛选），新增/编辑/删除按 RID 精确定位
+- **SQL 工作台**：CodeMirror 编辑器（高亮/补全/行号），单语句/选中/脚本执行（真词法拆分），
+  结果/消息/执行计划/历史，BEGIN·COMMIT·ROLLBACK 与按钮同源
+- **索引与计划**：索引 CRUD、真实 B+ 树结构快照（SVG）、优化器执行计划树
+- **内核实验室**（全部独立实验库、全部真实内核行为）：
+  存储与缓冲池（4KB 页/Slot/RID、读命中→变脏→写回）· SQL 执行流程（Token→AST→Plan→Result）·
+  事务与锁（双会话、RC/RR/锁等待/死锁模板、锁等待图）· WAL 与恢复（真实 crash → redo/undo 报告 →
+  一致性检查）· 性能实验（实时测量 SeqScan vs IndexScan）· JDBC（标准驱动全流程）
+- **学习与帮助**：架构速览、SQL 方言速查、文档索引
+
+细节见 [docs/studio/](docs/studio/)（架构 / API / 会话模型 / 实验设计 / 前端设计 / 验收清单）与
+[MiniDB-Web-Integration-Notes.md](MiniDB-Web-Integration-Notes.md)（内核集成摸底）。
+
+```bash
+# 构建与启动
+build-studio.bat          # 前端 build → resources → fat jar
+启动 MiniDB Studio.bat    # 检查 Java → 启动 → 等端口 → 开浏览器
+
+# 开发模式（前端热更新）
+cd frontend && npm install && npm run dev   # Vite :5173，/api 代理 :8080
+java -cp "target/classes;<jackson 等>" minidb.web.MiniDbWebServer --port 8080
+```
 
 ## 快速开始
 
@@ -105,7 +135,7 @@ BEGIN; ... COMMIT; / ROLLBACK;                    -- 显式事务
 ## 测试
 
 ```bash
-mvn test    # 350 项全绿
+mvn test    # 369 项全绿（内核 350 + Studio Web 层 19）
 ```
 
 覆盖：字节编解码边界、磁盘 IO 故障、缓冲池 LRU/pin/脏页/日志临界区、位图链跨页、定长/变长表边界（VARCHAR 超长、空洞压缩、页回收）、目录溢出、B+ 树 long/String 双门面各 10 万键对拍 TreeMap（含删 5 万再对拍、CJK/前缀键）、词法/语法 40 项结构断言、执行器 60 项（含 Hash Join 语义 8 项）+ 200 条端到端 SQL 脚本、锁/隔离/恢复/WAL 36 项（含 steal 淘汰、no-force redo、迁移 UPDATE 双向、WAL 往返与残缺尾自愈、随机截断断电、20 线程转账守恒）、JDBC 35 项。
@@ -124,5 +154,10 @@ src/main/java/minidb/
 ├── jdbc/      标准驱动 8 类（阶段 6）
 ├── demo/      JdbcDemo（阶段 6）
 ├── repl/      REPL（SQL 模式 + 阶段 1 白盒命令）
-└── perf/      Stress1M 压测程序（阶段 4）
+├── perf/      Stress1M 压测程序（阶段 4）
+└── web/       MiniDB Studio Web 层（服务器/路由/会话/服务/实验室）
+
+frontend/                  Studio 前端（React + TS + Vite + CodeMirror）
+src/main/resources/webroot/ 前端构建产物（Java 服务器直接提供静态页）
+docs/studio/               Studio 架构/API/会话模型/实验设计/前端设计/验收清单
 ```

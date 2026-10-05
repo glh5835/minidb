@@ -172,4 +172,16 @@ public final class BufferPool implements AutoCloseable {
     public synchronized void close() {
         flushAll();
     }
+
+    /** 一个缓存页的只读状态（Studio 缓冲池可视化用）。 */
+    public record PageState(int pageId, int pinCount, boolean dirty, long pageLsn, String type) {}
+
+    /** 只读快照池内全部页状态（迭代序 = LRU 从旧到新）；不改任何状态。 */
+    public synchronized java.util.List<PageState> snapshot() {
+        java.util.List<PageState> out = new java.util.ArrayList<>();
+        for (Page p : pool.values())
+            out.add(new PageState(p.pageId(), p.pinCount(), p.isDirty(), p.pageLsn(),
+                    p.typeOrNull() == null ? "META" : p.typeOrNull().name()));
+        return out;
+    }
 }

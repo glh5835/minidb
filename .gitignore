@@ -12,3 +12,8 @@ build.sh
 hs_err_pid*.log
 .zcode/
 .video_agent/
+frontend/node_modules/
+frontend/dist/
+out/
+.v2c/
+dependency-reduced-pom.xml
