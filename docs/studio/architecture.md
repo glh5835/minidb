@@ -53,5 +53,5 @@ frontend/                 React 前端（构建产物 dist → src/main/resource
 src/main/java/minidb/web/ Web 层（服务器/路由/服务/实验室）
 src/main/resources/webroot/ 前端静态资源（由 Java 服务器直接提供）
 build-studio.bat          构建：前端 build → resources → shade fat jar
-启动 MiniDB Studio.bat    一键启动：检查 Java → 启动 → 等端口 → 开浏览器
+启动 MiniDB Studio.bat    一键启动：检查 Java/端口 → 启动 → 验证健康接口 → 开浏览器
 ```

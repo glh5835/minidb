@@ -39,12 +39,18 @@
 ```bash
 # 构建与启动
 build-studio.bat          # 前端 build → resources → fat jar
-启动 MiniDB Studio.bat    # 检查 Java → 启动 → 等端口 → 开浏览器
+启动 MiniDB Studio.bat    # 检查 Java/端口 → 启动 → 验证健康接口 → 开浏览器
 
 # 开发模式（前端热更新）
 cd frontend && npm install && npm run dev   # Vite :5173，/api 代理 :8080
 java -cp "target/classes;<jackson 等>" minidb.web.MiniDbWebServer --port 8080
 ```
+
+启动脚本会先拒绝已被占用的 8080 端口，并在启动后轮询
+`GET /api/v1/health`（默认最多 30 秒）。只有响应同时满足
+`success=true`、`data.status=ok`、`data.service=minidb-studio` 时才会显示就绪并打开浏览器。
+验证正常启动、端口占用和服务启动失败的方法见
+[启动流程验证](docs/studio/startup-verification.md)。
 
 ## 快速开始
 
