@@ -1,0 +1,405 @@
+{
+  "root": "D:\\MiniDB-design-review\\design\\minidb-studio-redesign",
+  "output": "D:\\MiniDB-design-review\\design\\minidb-studio-redesign\\screenshots\\qa-run-03",
+  "captures": [
+    {
+      "file": "after-start-1366x768.png",
+      "viewport": {
+        "width": 1366,
+        "height": 768
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/start",
+      "title": "MiniDB Studio · 从一个具体任务开始"
+    },
+    {
+      "file": "after-start-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/start",
+      "title": "MiniDB Studio · 从一个具体任务开始"
+    },
+    {
+      "file": "after-start-1920x1080.png",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/start",
+      "title": "MiniDB Studio · 从一个具体任务开始"
+    },
+    {
+      "file": "after-start-1024x768.png",
+      "viewport": {
+        "width": 1024,
+        "height": 768
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/start",
+      "title": "MiniDB Studio · 从一个具体任务开始"
+    },
+    {
+      "file": "after-database-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/database",
+      "title": "MiniDB Studio · student"
+    },
+    {
+      "file": "after-danger-dialog-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/database",
+      "title": "MiniDB Studio · student"
+    },
+    {
+      "file": "after-sql-success-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/sql",
+      "title": "MiniDB Studio · 查询编辑器"
+    },
+    {
+      "file": "after-sql-error-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/sql",
+      "title": "MiniDB Studio · 查询编辑器"
+    },
+    {
+      "file": "after-index-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/index",
+      "title": "MiniDB Studio · 索引与执行计划"
+    },
+    {
+      "file": "after-storage-lab-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/lab-storage",
+      "title": "MiniDB Studio · 观察一条记录如何落入 4KB 页"
+    },
+    {
+      "file": "after-txn-lab-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/lab-txn",
+      "title": "MiniDB Studio · 让两个事务发生可解释的冲突"
+    },
+    {
+      "file": "after-pipeline-lab-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/lab-pipeline",
+      "title": "MiniDB Studio · 从字符到结果，一步一步看"
+    },
+    {
+      "file": "after-recovery-lab-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/lab-recovery",
+      "title": "MiniDB Studio · 看见一次崩溃后的 redo 与 undo"
+    },
+    {
+      "file": "after-perf-lab-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/lab-perf",
+      "title": "MiniDB Studio · 控制变量，对比 SeqScan 与 IndexScan"
+    },
+    {
+      "file": "after-jdbc-lab-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/lab-jdbc",
+      "title": "MiniDB Studio · 把标准接口与数据库状态对齐"
+    },
+    {
+      "file": "after-help-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/help",
+      "title": "MiniDB Studio · 快速找到限制、术语和下一步"
+    },
+    {
+      "file": "after-database-1024x768.png",
+      "viewport": {
+        "width": 1024,
+        "height": 768
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/database",
+      "title": "MiniDB Studio · student"
+    },
+    {
+      "file": "after-sql-1024x768.png",
+      "viewport": {
+        "width": 1024,
+        "height": 768
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/sql",
+      "title": "MiniDB Studio · 查询编辑器"
+    },
+    {
+      "file": "after-start-zoom-125-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/start",
+      "title": "MiniDB Studio · 从一个具体任务开始"
+    },
+    {
+      "file": "after-sql-zoom-150-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/prototype/index.html#/sql",
+      "title": "MiniDB Studio · 查询编辑器"
+    },
+    {
+      "file": "style-a-jade-start-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/style-previews/a-jade.html",
+      "title": "A · 玉白松绿"
+    },
+    {
+      "file": "style-a-jade-sql-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/style-previews/a-jade.html",
+      "title": "A · 玉白松绿"
+    },
+    {
+      "file": "style-b-academy-start-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/style-previews/b-academy.html",
+      "title": "B · 纸感学院"
+    },
+    {
+      "file": "style-b-academy-sql-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/style-previews/b-academy.html",
+      "title": "B · 纸感学院"
+    },
+    {
+      "file": "style-c-inklab-start-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/style-previews/c-inklab.html",
+      "title": "C · 墨色实验室"
+    },
+    {
+      "file": "style-c-inklab-sql-1440x900.png",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "http://127.0.0.1:57213/style-previews/c-inklab.html",
+      "title": "C · 墨色实验室"
+    }
+  ],
+  "checks": [
+    {
+      "name": "start-1366x768-single-active-view",
+      "passed": true,
+      "detail": "{\"bodyScrollWidth\": 1366, \"viewportWidth\": 1366, \"activeViews\": 1, \"ribbon\": \"设计原型\\n示例数据 · 不连接后端 · 不会执行数据库命令\"}"
+    },
+    {
+      "name": "start-1366x768-no-whole-page-horizontal-overflow",
+      "passed": true,
+      "detail": "{\"bodyScrollWidth\": 1366, \"viewportWidth\": 1366, \"activeViews\": 1, \"ribbon\": \"设计原型\\n示例数据 · 不连接后端 · 不会执行数据库命令\"}"
+    },
+    {
+      "name": "start-1440x900-single-active-view",
+      "passed": true,
+      "detail": "{\"bodyScrollWidth\": 1440, \"viewportWidth\": 1440, \"activeViews\": 1, \"ribbon\": \"设计原型\\n示例数据 · 不连接后端 · 不会执行数据库命令\"}"
+    },
+    {
+      "name": "start-1440x900-no-whole-page-horizontal-overflow",
+      "passed": true,
+      "detail": "{\"bodyScrollWidth\": 1440, \"viewportWidth\": 1440, \"activeViews\": 1, \"ribbon\": \"设计原型\\n示例数据 · 不连接后端 · 不会执行数据库命令\"}"
+    },
+    {
+      "name": "start-1920x1080-single-active-view",
+      "passed": true,
+      "detail": "{\"bodyScrollWidth\": 1920, \"viewportWidth\": 1920, \"activeViews\": 1, \"ribbon\": \"设计原型\\n示例数据 · 不连接后端 · 不会执行数据库命令\"}"
+    },
+    {
+      "name": "start-1920x1080-no-whole-page-horizontal-overflow",
+      "passed": true,
+      "detail": "{\"bodyScrollWidth\": 1920, \"viewportWidth\": 1920, \"activeViews\": 1, \"ribbon\": \"设计原型\\n示例数据 · 不连接后端 · 不会执行数据库命令\"}"
+    },
+    {
+      "name": "start-1024x768-single-active-view",
+      "passed": true,
+      "detail": "{\"bodyScrollWidth\": 1024, \"viewportWidth\": 1024, \"activeViews\": 1, \"ribbon\": \"设计原型\\n示例数据 · 不连接后端 · 不会执行数据库命令\"}"
+    },
+    {
+      "name": "start-1024x768-no-whole-page-horizontal-overflow",
+      "passed": true,
+      "detail": "{\"bodyScrollWidth\": 1024, \"viewportWidth\": 1024, \"activeViews\": 1, \"ribbon\": \"设计原型\\n示例数据 · 不连接后端 · 不会执行数据库命令\"}"
+    },
+    {
+      "name": "wide-table-scroll-contained",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "danger-dialog-open",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "danger-dialog-names-scope",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "database-schema-tab",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "database-index-tab",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "sql-error-state",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "sql-empty-state",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "sql-idle-state",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "sql-running-state",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "sql-success-after-shortcut",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "transaction-state-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "route-index",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "route-lab-storage",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "route-lab-txn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "route-lab-pipeline",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "route-lab-recovery",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "route-lab-perf",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "route-lab-jdbc",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "route-help",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "zoom-125-primary-task-reachable",
+      "passed": true,
+      "detail": "{\"x\": 307.5, \"y\": 259.6875, \"width\": 355, \"height\": 102.5}"
+    },
+    {
+      "name": "zoom-150-run-sql-reachable",
+      "passed": true,
+      "detail": "{\"x\": 376, \"y\": 677, \"width\": 243.265625, \"height\": 51}"
+    },
+    {
+      "name": "style-a-jade-sql-toggle",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "style-b-academy-sql-toggle",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "style-c-inklab-sql-toggle",
+      "passed": true,
+      "detail": ""
+    }
+  ],
+  "console_errors": [],
+  "page_errors": [],
+  "passed": true
+}

@@ -1,0 +1,38 @@
+{
+  "url": "http://127.0.0.1:8080",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "captures": [
+    {
+      "file": "before-start-1440x900.png",
+      "hash": "",
+      "title": "MiniDB Studio",
+      "body_text_sample": "MiniDB Studio\n数据库：\n未打开\n连接：\n已连接\n事务：\n自动提交\n表：0\n开始\n开始页🏠\n数据库\n数据浏览📋\nSQL 工作台⌨️\n索引与计划🌳\n内核实验室\n存储与缓冲池💾\nSQL 执行流程🔍\n事务与锁🔒\nWAL 与恢复⚡\n性能实验⏱️\nJDBC☕\n学习与帮助\n学习与帮助📖\nMiniDB Studio\n\n连接真实 MiniDB 内核的本地工作台：可视化管理 · SQL 开发 · 内核观察 · 教学实验\n\n＋\n创建数据库\n新建一个 .db 数据库文件\n📂\n打开数据库\n输入路径打开已有数据库\n🎓\n创建示例数据库\nschool.db：学生/课程/成绩\n创建\n打开\n最近数据库\n暂无记录。创建或打开一个数据库后会显示在这里。\n新用户引导\n\n首次使用？按以下顺序操作，几分钟即可建立完整认知：\n\n创建示例数据库 —— 点击上方 🎓，得到 school.db（含 student / course / score 三张表与索引）\n浏览 student 表 —— 进入\"数据浏览\"，直接查看、编辑、增删记录（无需 SQL）\n执行 SELECT —— 在\"SQL 工作台\"输入 SELECT * F"
+    },
+    {
+      "file": "before-database-1440x900.png",
+      "hash": "#/db",
+      "title": "MiniDB Studio",
+      "body_text_sample": "MiniDB Studio\n数据库：\nschool.db\n工作库\n连接：\n已连接\n事务：\n自动提交\n表：3\n开始\n开始页🏠\n数据库\n数据浏览📋\nSQL 工作台⌨️\n索引与计划🌳\n内核实验室\n存储与缓冲池💾\nSQL 执行流程🔍\n事务与锁🔒\nWAL 与恢复⚡\n性能实验⏱️\nJDBC☕\n学习与帮助\n学习与帮助📖\n表\n＋\nstudent6 行\ncourse3 行\nscore6 行\n数据\n结构\n索引\n筛选列…\nid\nname\nage\nscore\n=\n!=\n<\n<=\n>\n>=\nLIKE\n筛选\n清除\n↻ 刷新\n导出 CSV\n＋ 添加记录\n删除表\nRID\tid INT\tname VARCHAR(50)\tage INT\tscore DOUBLE\t操作\n3/0\t1\t张伟\t20\t88.5\t\n编辑\n删除\n\n3/1\t2\t王芳\t21\t92\t\n编辑\n删除\n\n3/2\t3\t李娜\t20\t76.5\t\n编辑\n删除\n\n3/3\t4\t刘洋\t22\t65\t\n编辑\n删除\n\n3/4\t5\t陈静\t21\t84\t\n编辑\n删除\n\n3/5\t6\t杨帆\t20\t58.5\t\n编辑\n删除\n第 1 / 1 页 · 共 6 行\n上一页\n下一页\n本次查询 0 ms "
+    },
+    {
+      "file": "before-sql-1440x900.png",
+      "hash": "#/sql",
+      "title": "MiniDB Studio",
+      "body_text_sample": "MiniDB Studio\n数据库：\nschool.db\n工作库\n连接：\n已连接\n事务：\n自动提交\n表：3\n开始\n开始页🏠\n数据库\n数据浏览📋\nSQL 工作台⌨️\n索引与计划🌳\n内核实验室\n存储与缓冲池💾\nSQL 执行流程🔍\n事务与锁🔒\nWAL 与恢复⚡\n性能实验⏱️\nJDBC☕\n学习与帮助\n学习与帮助📖\n1\nSELECT * FROM student;\n▶ 执行\nCtrl+Enter\n▶ 执行选中\n■ 停止\n🌳 执行计划\n开始事务\n提交\n回滚\n自动提交\n结果\n消息\n执行计划\n历史\n执行 SQL 后在此查看结果。\n已打开 school.db"
+    }
+  ],
+  "console_errors": [],
+  "page_errors": [],
+  "health": {
+    "success": true,
+    "data": {
+      "status": "ok",
+      "service": "minidb-studio",
+      "version": "0.1.0"
+    }
+  },
+  "passed": true
+}

@@ -1,0 +1,703 @@
+{
+  "source": "D:\\MiniDB-design-review\\design\\minidb-studio-redesign\\review.html",
+  "offline": true,
+  "browser": "edge",
+  "captures": [
+    {
+      "slide": 1,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "screenshot": "1920x1080-slide-001.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H1",
+          "text": "把数据库能力组织成一个工作台"
+        }
+      ],
+      "stage": {
+        "width": 1920,
+        "height": 1080
+      },
+      "text": "MINIDB STUDIO · DESIGN REVIEW\n2026-10-09\n把数据库能力\n组织成一个工作台\n\n真实项目盘点 · 三种视觉方向 · 可点击高保真原型 · 落地顺序\n\n设计方案与原型待审核\n基线 c1cdb526ba2d0a8fdff615ad52c588aec9a88302\n11 ROUTES · 6 LABS · 1 UNIFIED WORKBENCH",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 2,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "screenshot": "1920x1080-slide-002.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "不是从想象开始：先看当前产品"
+        }
+      ],
+      "stage": {
+        "width": 1920,
+        "height": 1080
+      },
+      "text": "01 / 已验证的真实基线\nRUNNING UI · 1440×900\n不是从想象开始：先看当前产品\n开始页 · 当前实现\n真实运行截图\n数据浏览\nstudent\nSQL 工作台\n未执行\n健康接口：success=true · status=ok · service=minidb-studio\n02 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 3,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "screenshot": "1920x1080-slide-003.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "问题不是“不够高级”，而是任务线索不够强"
+        }
+      ],
+      "stage": {
+        "width": 1920,
+        "height": 1080
+      },
+      "text": "02 / 六个有证据的问题维度\nSOURCE + RUNNING UI\n问题不是“不够高级”，而是任务线索不够强\n当前数据库页\n应用导航 + 对象导航\n01 信息层级\n顶栏状态平铺成同一权重\n\n数据库、连接、事务、表数挤在一行；当前任务和操作对象缺少主次。\n\n02 功能发现\nEmoji 与文字混合承担导航\n\n图标线宽、语义和对齐不一致；实验入口虽齐全，但分组层级偏弱。\n\n03 操作路径\n开始页任务与说明分离\n\n输入框、快捷卡和新手引导重复解释，下一步仍需用户自行对应。\n\n04 阅读密度\nSQL 结果区过早失去主导权\n\n编辑器固定 200px；空结果区和页面留白较大，核心工作区比例失衡。\n\n05 状态反馈\nToast 会消失，长过程缺少锚点\n\n会话过期、迁移、错误虽有文案，但持续状态与局部反馈未形成系统。\n\n06 一致性\n大量内联布局限制复用\n\n页面依赖 card + inline style，工具栏、对象头和实验框架难以统一调整。\n\n每项均可定位到 App.tsx / ui.tsx / 对应 feature 页面 / styles.css\n03 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 4,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "screenshot": "1920x1080-slide-004.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "一个稳定外壳，三种清晰上下文"
+        }
+      ],
+      "stage": {
+        "width": 1920,
+        "height": 1080
+      },
+      "text": "03 / 新信息架构\nAPP NAV ≠ OBJECT NAV\n一个稳定外壳，三种清晰上下文\n\n全局状态持续可见；应用功能用主导航；数据库和表用对象导航；说明与历史按任务出现。\n\n应用导航\n工作区\n开始\n数据库管理\nSQL 工作台\n分析与观察\n索引与执行计划\n教学实验室\n六类实验（可展开）\n帮助\n固定底部入口\n全局顶栏\n产品身份 · 当前数据库 · 连接状态 · 事务状态\n中央任务区\n编辑器、表格、计划树或实验观察器成为主角\nCURRENT TASK → ACTION → RESULT\n按需辅助区\n对象树 / 节点详情 / 历史 / 解释\n持续状态与安全边界\n工作库 / 实验库 · RID · SQL 草稿 · 事务 · 操作影响范围\n首页是任务入口，不是宣传页\n04 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 5,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "screenshot": "1920x1080-slide-005.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "不是换三套颜色，而是换三种工作方式"
+        }
+      ],
+      "stage": {
+        "width": 1920,
+        "height": 1080
+      },
+      "text": "04 / 三种真实界面方向\nSAME CONTENT · SAME VIEWPORT\n不是换三套颜色，而是换三种工作方式\nA · 玉白松绿\n\n左侧分区导航；均衡信息密度；对象与任务边界清楚。适合长时间使用。\n\n推荐\nB · 纸感学院\n\n横向章节导航；纸面双栏；教学引导更强，但宽页面和高频切换成本略高。\n\nC · 墨色实验室\n\n窄图标轨；高密度暗色工作台；SQL 聚焦，但新用户发现成本最高。\n\n每个方向均提供开始页 + SQL 工作台，可本地切换\n05 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 6,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "screenshot": "1920x1080-slide-006.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "选择 A：把“已有正确方向”做深，而不是推翻"
+        }
+      ],
+      "stage": {
+        "width": 1920,
+        "height": 1080
+      },
+      "text": "05 / 推荐结论\nREFINEMENT × CLARITY × COMFORT × COST\n选择 A：把“已有正确方向”做深，而不是推翻\n方向\t精致程度\t功能清晰度\t长时舒适\t实现成本\nA · 玉白松绿\t4.7 / 5\t4.8 / 5\t4.8 / 5\t低–中\nB · 纸感学院\t4.4 / 5\t4.2 / 5\t4.3 / 5\t中\nC · 墨色实验室\t4.5 / 5\t3.8 / 5\t4.0 / 5\t中–高\n判断依据\n现有产品已经使用 #F7FAF8 / #23866B；A 通过比例、层级、对象导航和状态系统提升品质，迁移风险最低。\nA\n精密，而不疏离\n新手从任务进入，不先理解架构\n熟练用户保留表、SQL、索引直达\n浅色高密度更适合教学与长时使用\n可沿用 React / CodeMirror / 现有 API\n推荐 ≠ 已批准实施\n06 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 7,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "screenshot": "1920x1080-slide-007.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "数据库、表、记录：三个层级不再混在一起"
+        }
+      ],
+      "stage": {
+        "width": 1920,
+        "height": 1080
+      },
+      "text": "06 / 核心原型：数据库管理\nOBJECT → VIEW → ACTION\n数据库、表、记录：三个层级不再混在一起\n推荐方案 · student 数据视图\n可点击原型\n对象导航独立\n\n左侧应用导航负责功能；第二列仅列出当前数据库对象，避免两套同权菜单。\n\n宽表只在表内滚动\n\nRID、BIGINT、长字段和操作列保持可辨；整个应用不横向溢出。\n\n空值语义明确\n\nNULL、空字符串、长内容截断分别展示，不用同一种空白混淆。\n\n危险操作说明对象与影响\n\n删除确认显示 school.db / student / RID 3/0 以及自动提交状态。\n\n结构 / 索引页签保持当前表对象不变\n07 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 8,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "screenshot": "1920x1080-slide-008.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "编辑器和结果成为主角，事务不躲起来"
+        }
+      ],
+      "stage": {
+        "width": 1920,
+        "height": 1080
+      },
+      "text": "07 / 核心原型：SQL 工作台\nEDITOR + RESULT FIRST\n编辑器和结果成为主角，事务不躲起来\n成功状态\nCtrl+Enter 可操作\n错误状态\n靠近问题发生处\n未执行\n执行中\n成功\n错误\n空结果\n草稿保留 · 原始 SQL 保留 · 事务提交/回滚持续可见 · 耗时标注来源\n08 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 9,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "screenshot": "1920x1080-slide-009.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "统一的是学习节奏，不是把六个实验做成同一张表单"
+        }
+      ],
+      "stage": {
+        "width": 1920,
+        "height": 1080
+      },
+      "text": "08 / 教学实验室\nONE FRAMEWORK · DIFFERENT OBSERVATIONS\n统一的是学习节奏，不是把六个实验做成同一张表单\n存储与缓冲池 · 空间观察器\n\n页地图、页内布局、slot 表和 RID 迁移解释围绕“记录落在哪”展开。\n\n事务与锁 · 双会话控制室\n\n两列会话 + 中央等待图；锁、等待、死锁牺牲者和日志持续可见。\n\n其余四类：流水线 / 恢复 / 性能 / JDBC 均有完整入口与专属观察方式\n09 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 10,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "screenshot": "1920x1080-slide-010.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "11 条现有路由，都有明确归宿"
+        }
+      ],
+      "stage": {
+        "width": 1920,
+        "height": 1080
+      },
+      "text": "09 / 原功能覆盖\nNO FEATURE DROPPED\n11 条现有路由，都有明确归宿\n现有板块\t当前入口 / 关键能力\t新方案位置\t保留方式\t验证状态\n开始页\t#/start · 创建 / 打开 / 最近 / 示例 / 引导\t工作区 › 开始\t任务入口 + 最近列表 + 下一步\t源码 + 运行\n数据库管理\t#/db · 数据 / 结构 / 索引 / RID CRUD\t工作区 › 数据库管理\t对象树 + 三页签 + 宽表内滚动\t源码 + 运行\nSQL 工作台\t#/sql · CodeMirror / 结果 / 计划 / 历史 / 事务\t工作区 › SQL 工作台\t编辑器与结果主导，五种状态\t源码 + 运行\n索引与计划\t#/index · CRUD / B+ 树 / Explain\t分析与观察\t索引—节点—计划同一上下文\t源码 + 原型\n六类实验\t#/lab/* · 存储 / 流水线 / 事务 / 恢复 / 性能 / JDBC\t教学实验室（可展开）\t统一五步框架 + 不同观察器\t源码 + 原型\n帮助\t#/help · 架构 / 方言 / 文档\t固定底部入口\t上手 / 限制 / 错误 / 快捷键\t源码 + 原型\n完整映射与 API 对照见 DESIGN_SPEC.md\n10 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 11,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "screenshot": "1920x1080-slide-011.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "先统一外壳，再迁移高频任务，最后补 API 缺口"
+        }
+      ],
+      "stage": {
+        "width": 1920,
+        "height": 1080
+      },
+      "text": "10 / 最小落地顺序\nDESIGN READY · IMPLEMENTATION NOT STARTED\n先统一外壳，再迁移高频任务，最后补 API 缺口\n01\n纯视觉调整\n\n把 tokens、顶栏、主导航、按钮、表格、状态样式集中到现有 styles.css 与 ui.tsx。\n\n低风险 · 不改 API\n02\n前端交互调整\n\n在 DatabasePage / SqlPage / IndexPlanPage 中引入对象头、持久状态和统一实验框架。\n\n中风险 · 保留 CodeMirror\n03\n需 API 支持的建议\n\n仅在审批后补充停止执行、NULL 能力声明、实验目录一致性等接口；不改变 SQL 语义或文件格式。\n\n单独评审 · 后端契约测试\n本轮边界\n没有修改正式 React 页面、Java 内核、API、启动脚本、依赖或数据库格式；没有发布、部署、提交或推送。\n打开可点击高保真原型 →\n下一状态：设计方案与原型待审核\n11 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 1,
+      "viewport": [
+        1280,
+        720
+      ],
+      "screenshot": "1280x720-slide-001.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H1",
+          "text": "把数据库能力组织成一个工作台"
+        }
+      ],
+      "stage": {
+        "width": 1280,
+        "height": 720
+      },
+      "text": "MINIDB STUDIO · DESIGN REVIEW\n2026-10-09\n把数据库能力\n组织成一个工作台\n\n真实项目盘点 · 三种视觉方向 · 可点击高保真原型 · 落地顺序\n\n设计方案与原型待审核\n基线 c1cdb526ba2d0a8fdff615ad52c588aec9a88302\n11 ROUTES · 6 LABS · 1 UNIFIED WORKBENCH",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 2,
+      "viewport": [
+        1280,
+        720
+      ],
+      "screenshot": "1280x720-slide-002.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "不是从想象开始：先看当前产品"
+        }
+      ],
+      "stage": {
+        "width": 1280,
+        "height": 720
+      },
+      "text": "01 / 已验证的真实基线\nRUNNING UI · 1440×900\n不是从想象开始：先看当前产品\n开始页 · 当前实现\n真实运行截图\n数据浏览\nstudent\nSQL 工作台\n未执行\n健康接口：success=true · status=ok · service=minidb-studio\n02 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 3,
+      "viewport": [
+        1280,
+        720
+      ],
+      "screenshot": "1280x720-slide-003.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "问题不是“不够高级”，而是任务线索不够强"
+        }
+      ],
+      "stage": {
+        "width": 1280,
+        "height": 720
+      },
+      "text": "02 / 六个有证据的问题维度\nSOURCE + RUNNING UI\n问题不是“不够高级”，而是任务线索不够强\n当前数据库页\n应用导航 + 对象导航\n01 信息层级\n顶栏状态平铺成同一权重\n\n数据库、连接、事务、表数挤在一行；当前任务和操作对象缺少主次。\n\n02 功能发现\nEmoji 与文字混合承担导航\n\n图标线宽、语义和对齐不一致；实验入口虽齐全，但分组层级偏弱。\n\n03 操作路径\n开始页任务与说明分离\n\n输入框、快捷卡和新手引导重复解释，下一步仍需用户自行对应。\n\n04 阅读密度\nSQL 结果区过早失去主导权\n\n编辑器固定 200px；空结果区和页面留白较大，核心工作区比例失衡。\n\n05 状态反馈\nToast 会消失，长过程缺少锚点\n\n会话过期、迁移、错误虽有文案，但持续状态与局部反馈未形成系统。\n\n06 一致性\n大量内联布局限制复用\n\n页面依赖 card + inline style，工具栏、对象头和实验框架难以统一调整。\n\n每项均可定位到 App.tsx / ui.tsx / 对应 feature 页面 / styles.css\n03 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 4,
+      "viewport": [
+        1280,
+        720
+      ],
+      "screenshot": "1280x720-slide-004.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "一个稳定外壳，三种清晰上下文"
+        }
+      ],
+      "stage": {
+        "width": 1280,
+        "height": 720
+      },
+      "text": "03 / 新信息架构\nAPP NAV ≠ OBJECT NAV\n一个稳定外壳，三种清晰上下文\n\n全局状态持续可见；应用功能用主导航；数据库和表用对象导航；说明与历史按任务出现。\n\n应用导航\n工作区\n开始\n数据库管理\nSQL 工作台\n分析与观察\n索引与执行计划\n教学实验室\n六类实验（可展开）\n帮助\n固定底部入口\n全局顶栏\n产品身份 · 当前数据库 · 连接状态 · 事务状态\n中央任务区\n编辑器、表格、计划树或实验观察器成为主角\nCURRENT TASK → ACTION → RESULT\n按需辅助区\n对象树 / 节点详情 / 历史 / 解释\n持续状态与安全边界\n工作库 / 实验库 · RID · SQL 草稿 · 事务 · 操作影响范围\n首页是任务入口，不是宣传页\n04 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 5,
+      "viewport": [
+        1280,
+        720
+      ],
+      "screenshot": "1280x720-slide-005.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "不是换三套颜色，而是换三种工作方式"
+        }
+      ],
+      "stage": {
+        "width": 1280,
+        "height": 720
+      },
+      "text": "04 / 三种真实界面方向\nSAME CONTENT · SAME VIEWPORT\n不是换三套颜色，而是换三种工作方式\nA · 玉白松绿\n\n左侧分区导航；均衡信息密度；对象与任务边界清楚。适合长时间使用。\n\n推荐\nB · 纸感学院\n\n横向章节导航；纸面双栏；教学引导更强，但宽页面和高频切换成本略高。\n\nC · 墨色实验室\n\n窄图标轨；高密度暗色工作台；SQL 聚焦，但新用户发现成本最高。\n\n每个方向均提供开始页 + SQL 工作台，可本地切换\n05 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 6,
+      "viewport": [
+        1280,
+        720
+      ],
+      "screenshot": "1280x720-slide-006.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "选择 A：把“已有正确方向”做深，而不是推翻"
+        }
+      ],
+      "stage": {
+        "width": 1280,
+        "height": 720
+      },
+      "text": "05 / 推荐结论\nREFINEMENT × CLARITY × COMFORT × COST\n选择 A：把“已有正确方向”做深，而不是推翻\n方向\t精致程度\t功能清晰度\t长时舒适\t实现成本\nA · 玉白松绿\t4.7 / 5\t4.8 / 5\t4.8 / 5\t低–中\nB · 纸感学院\t4.4 / 5\t4.2 / 5\t4.3 / 5\t中\nC · 墨色实验室\t4.5 / 5\t3.8 / 5\t4.0 / 5\t中–高\n判断依据\n现有产品已经使用 #F7FAF8 / #23866B；A 通过比例、层级、对象导航和状态系统提升品质，迁移风险最低。\nA\n精密，而不疏离\n新手从任务进入，不先理解架构\n熟练用户保留表、SQL、索引直达\n浅色高密度更适合教学与长时使用\n可沿用 React / CodeMirror / 现有 API\n推荐 ≠ 已批准实施\n06 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 7,
+      "viewport": [
+        1280,
+        720
+      ],
+      "screenshot": "1280x720-slide-007.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "数据库、表、记录：三个层级不再混在一起"
+        }
+      ],
+      "stage": {
+        "width": 1280,
+        "height": 720
+      },
+      "text": "06 / 核心原型：数据库管理\nOBJECT → VIEW → ACTION\n数据库、表、记录：三个层级不再混在一起\n推荐方案 · student 数据视图\n可点击原型\n对象导航独立\n\n左侧应用导航负责功能；第二列仅列出当前数据库对象，避免两套同权菜单。\n\n宽表只在表内滚动\n\nRID、BIGINT、长字段和操作列保持可辨；整个应用不横向溢出。\n\n空值语义明确\n\nNULL、空字符串、长内容截断分别展示，不用同一种空白混淆。\n\n危险操作说明对象与影响\n\n删除确认显示 school.db / student / RID 3/0 以及自动提交状态。\n\n结构 / 索引页签保持当前表对象不变\n07 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 8,
+      "viewport": [
+        1280,
+        720
+      ],
+      "screenshot": "1280x720-slide-008.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "编辑器和结果成为主角，事务不躲起来"
+        }
+      ],
+      "stage": {
+        "width": 1280,
+        "height": 720
+      },
+      "text": "07 / 核心原型：SQL 工作台\nEDITOR + RESULT FIRST\n编辑器和结果成为主角，事务不躲起来\n成功状态\nCtrl+Enter 可操作\n错误状态\n靠近问题发生处\n未执行\n执行中\n成功\n错误\n空结果\n草稿保留 · 原始 SQL 保留 · 事务提交/回滚持续可见 · 耗时标注来源\n08 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 9,
+      "viewport": [
+        1280,
+        720
+      ],
+      "screenshot": "1280x720-slide-009.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "统一的是学习节奏，不是把六个实验做成同一张表单"
+        }
+      ],
+      "stage": {
+        "width": 1280,
+        "height": 720
+      },
+      "text": "08 / 教学实验室\nONE FRAMEWORK · DIFFERENT OBSERVATIONS\n统一的是学习节奏，不是把六个实验做成同一张表单\n存储与缓冲池 · 空间观察器\n\n页地图、页内布局、slot 表和 RID 迁移解释围绕“记录落在哪”展开。\n\n事务与锁 · 双会话控制室\n\n两列会话 + 中央等待图；锁、等待、死锁牺牲者和日志持续可见。\n\n其余四类：流水线 / 恢复 / 性能 / JDBC 均有完整入口与专属观察方式\n09 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 10,
+      "viewport": [
+        1280,
+        720
+      ],
+      "screenshot": "1280x720-slide-010.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "11 条现有路由，都有明确归宿"
+        }
+      ],
+      "stage": {
+        "width": 1280,
+        "height": 720
+      },
+      "text": "09 / 原功能覆盖\nNO FEATURE DROPPED\n11 条现有路由，都有明确归宿\n现有板块\t当前入口 / 关键能力\t新方案位置\t保留方式\t验证状态\n开始页\t#/start · 创建 / 打开 / 最近 / 示例 / 引导\t工作区 › 开始\t任务入口 + 最近列表 + 下一步\t源码 + 运行\n数据库管理\t#/db · 数据 / 结构 / 索引 / RID CRUD\t工作区 › 数据库管理\t对象树 + 三页签 + 宽表内滚动\t源码 + 运行\nSQL 工作台\t#/sql · CodeMirror / 结果 / 计划 / 历史 / 事务\t工作区 › SQL 工作台\t编辑器与结果主导，五种状态\t源码 + 运行\n索引与计划\t#/index · CRUD / B+ 树 / Explain\t分析与观察\t索引—节点—计划同一上下文\t源码 + 原型\n六类实验\t#/lab/* · 存储 / 流水线 / 事务 / 恢复 / 性能 / JDBC\t教学实验室（可展开）\t统一五步框架 + 不同观察器\t源码 + 原型\n帮助\t#/help · 架构 / 方言 / 文档\t固定底部入口\t上手 / 限制 / 错误 / 快捷键\t源码 + 原型\n完整映射与 API 对照见 DESIGN_SPEC.md\n10 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 11,
+      "viewport": [
+        1280,
+        720
+      ],
+      "screenshot": "1280x720-slide-011.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "先统一外壳，再迁移高频任务，最后补 API 缺口"
+        }
+      ],
+      "stage": {
+        "width": 1280,
+        "height": 720
+      },
+      "text": "10 / 最小落地顺序\nDESIGN READY · IMPLEMENTATION NOT STARTED\n先统一外壳，再迁移高频任务，最后补 API 缺口\n01\n纯视觉调整\n\n把 tokens、顶栏、主导航、按钮、表格、状态样式集中到现有 styles.css 与 ui.tsx。\n\n低风险 · 不改 API\n02\n前端交互调整\n\n在 DatabasePage / SqlPage / IndexPlanPage 中引入对象头、持久状态和统一实验框架。\n\n中风险 · 保留 CodeMirror\n03\n需 API 支持的建议\n\n仅在审批后补充停止执行、NULL 能力声明、实验目录一致性等接口；不改变 SQL 语义或文件格式。\n\n单独评审 · 后端契约测试\n本轮边界\n没有修改正式 React 页面、Java 内核、API、启动脚本、依赖或数据库格式；没有发布、部署、提交或推送。\n打开可点击高保真原型 →\n下一状态：设计方案与原型待审核\n11 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 1,
+      "viewport": [
+        390,
+        844
+      ],
+      "screenshot": "390x844-slide-001.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H1",
+          "text": "把数据库能力组织成一个工作台"
+        }
+      ],
+      "stage": {
+        "width": 390,
+        "height": 219.375
+      },
+      "text": "MINIDB STUDIO · DESIGN REVIEW\n2026-10-09\n把数据库能力\n组织成一个工作台\n\n真实项目盘点 · 三种视觉方向 · 可点击高保真原型 · 落地顺序\n\n设计方案与原型待审核\n基线 c1cdb526ba2d0a8fdff615ad52c588aec9a88302\n11 ROUTES · 6 LABS · 1 UNIFIED WORKBENCH",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 2,
+      "viewport": [
+        390,
+        844
+      ],
+      "screenshot": "390x844-slide-002.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "不是从想象开始：先看当前产品"
+        }
+      ],
+      "stage": {
+        "width": 390,
+        "height": 219.375
+      },
+      "text": "01 / 已验证的真实基线\nRUNNING UI · 1440×900\n不是从想象开始：先看当前产品\n开始页 · 当前实现\n真实运行截图\n数据浏览\nstudent\nSQL 工作台\n未执行\n健康接口：success=true · status=ok · service=minidb-studio\n02 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 3,
+      "viewport": [
+        390,
+        844
+      ],
+      "screenshot": "390x844-slide-003.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "问题不是“不够高级”，而是任务线索不够强"
+        }
+      ],
+      "stage": {
+        "width": 390,
+        "height": 219.375
+      },
+      "text": "02 / 六个有证据的问题维度\nSOURCE + RUNNING UI\n问题不是“不够高级”，而是任务线索不够强\n当前数据库页\n应用导航 + 对象导航\n01 信息层级\n顶栏状态平铺成同一权重\n\n数据库、连接、事务、表数挤在一行；当前任务和操作对象缺少主次。\n\n02 功能发现\nEmoji 与文字混合承担导航\n\n图标线宽、语义和对齐不一致；实验入口虽齐全，但分组层级偏弱。\n\n03 操作路径\n开始页任务与说明分离\n\n输入框、快捷卡和新手引导重复解释，下一步仍需用户自行对应。\n\n04 阅读密度\nSQL 结果区过早失去主导权\n\n编辑器固定 200px；空结果区和页面留白较大，核心工作区比例失衡。\n\n05 状态反馈\nToast 会消失，长过程缺少锚点\n\n会话过期、迁移、错误虽有文案，但持续状态与局部反馈未形成系统。\n\n06 一致性\n大量内联布局限制复用\n\n页面依赖 card + inline style，工具栏、对象头和实验框架难以统一调整。\n\n每项均可定位到 App.tsx / ui.tsx / 对应 feature 页面 / styles.css\n03 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 4,
+      "viewport": [
+        390,
+        844
+      ],
+      "screenshot": "390x844-slide-004.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "一个稳定外壳，三种清晰上下文"
+        }
+      ],
+      "stage": {
+        "width": 390,
+        "height": 219.375
+      },
+      "text": "03 / 新信息架构\nAPP NAV ≠ OBJECT NAV\n一个稳定外壳，三种清晰上下文\n\n全局状态持续可见；应用功能用主导航；数据库和表用对象导航；说明与历史按任务出现。\n\n应用导航\n工作区\n开始\n数据库管理\nSQL 工作台\n分析与观察\n索引与执行计划\n教学实验室\n六类实验（可展开）\n帮助\n固定底部入口\n全局顶栏\n产品身份 · 当前数据库 · 连接状态 · 事务状态\n中央任务区\n编辑器、表格、计划树或实验观察器成为主角\nCURRENT TASK → ACTION → RESULT\n按需辅助区\n对象树 / 节点详情 / 历史 / 解释\n持续状态与安全边界\n工作库 / 实验库 · RID · SQL 草稿 · 事务 · 操作影响范围\n首页是任务入口，不是宣传页\n04 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 5,
+      "viewport": [
+        390,
+        844
+      ],
+      "screenshot": "390x844-slide-005.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "不是换三套颜色，而是换三种工作方式"
+        }
+      ],
+      "stage": {
+        "width": 390,
+        "height": 219.375
+      },
+      "text": "04 / 三种真实界面方向\nSAME CONTENT · SAME VIEWPORT\n不是换三套颜色，而是换三种工作方式\nA · 玉白松绿\n\n左侧分区导航；均衡信息密度；对象与任务边界清楚。适合长时间使用。\n\n推荐\nB · 纸感学院\n\n横向章节导航；纸面双栏；教学引导更强，但宽页面和高频切换成本略高。\n\nC · 墨色实验室\n\n窄图标轨；高密度暗色工作台；SQL 聚焦，但新用户发现成本最高。\n\n每个方向均提供开始页 + SQL 工作台，可本地切换\n05 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 6,
+      "viewport": [
+        390,
+        844
+      ],
+      "screenshot": "390x844-slide-006.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "选择 A：把“已有正确方向”做深，而不是推翻"
+        }
+      ],
+      "stage": {
+        "width": 390,
+        "height": 219.375
+      },
+      "text": "05 / 推荐结论\nREFINEMENT × CLARITY × COMFORT × COST\n选择 A：把“已有正确方向”做深，而不是推翻\n方向\t精致程度\t功能清晰度\t长时舒适\t实现成本\nA · 玉白松绿\t4.7 / 5\t4.8 / 5\t4.8 / 5\t低–中\nB · 纸感学院\t4.4 / 5\t4.2 / 5\t4.3 / 5\t中\nC · 墨色实验室\t4.5 / 5\t3.8 / 5\t4.0 / 5\t中–高\n判断依据\n现有产品已经使用 #F7FAF8 / #23866B；A 通过比例、层级、对象导航和状态系统提升品质，迁移风险最低。\nA\n精密，而不疏离\n新手从任务进入，不先理解架构\n熟练用户保留表、SQL、索引直达\n浅色高密度更适合教学与长时使用\n可沿用 React / CodeMirror / 现有 API\n推荐 ≠ 已批准实施\n06 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 7,
+      "viewport": [
+        390,
+        844
+      ],
+      "screenshot": "390x844-slide-007.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "数据库、表、记录：三个层级不再混在一起"
+        }
+      ],
+      "stage": {
+        "width": 390,
+        "height": 219.375
+      },
+      "text": "06 / 核心原型：数据库管理\nOBJECT → VIEW → ACTION\n数据库、表、记录：三个层级不再混在一起\n推荐方案 · student 数据视图\n可点击原型\n对象导航独立\n\n左侧应用导航负责功能；第二列仅列出当前数据库对象，避免两套同权菜单。\n\n宽表只在表内滚动\n\nRID、BIGINT、长字段和操作列保持可辨；整个应用不横向溢出。\n\n空值语义明确\n\nNULL、空字符串、长内容截断分别展示，不用同一种空白混淆。\n\n危险操作说明对象与影响\n\n删除确认显示 school.db / student / RID 3/0 以及自动提交状态。\n\n结构 / 索引页签保持当前表对象不变\n07 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 8,
+      "viewport": [
+        390,
+        844
+      ],
+      "screenshot": "390x844-slide-008.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "编辑器和结果成为主角，事务不躲起来"
+        }
+      ],
+      "stage": {
+        "width": 390,
+        "height": 219.375
+      },
+      "text": "07 / 核心原型：SQL 工作台\nEDITOR + RESULT FIRST\n编辑器和结果成为主角，事务不躲起来\n成功状态\nCtrl+Enter 可操作\n错误状态\n靠近问题发生处\n未执行\n执行中\n成功\n错误\n空结果\n草稿保留 · 原始 SQL 保留 · 事务提交/回滚持续可见 · 耗时标注来源\n08 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 9,
+      "viewport": [
+        390,
+        844
+      ],
+      "screenshot": "390x844-slide-009.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "统一的是学习节奏，不是把六个实验做成同一张表单"
+        }
+      ],
+      "stage": {
+        "width": 390,
+        "height": 219.375
+      },
+      "text": "08 / 教学实验室\nONE FRAMEWORK · DIFFERENT OBSERVATIONS\n统一的是学习节奏，不是把六个实验做成同一张表单\n存储与缓冲池 · 空间观察器\n\n页地图、页内布局、slot 表和 RID 迁移解释围绕“记录落在哪”展开。\n\n事务与锁 · 双会话控制室\n\n两列会话 + 中央等待图；锁、等待、死锁牺牲者和日志持续可见。\n\n其余四类：流水线 / 恢复 / 性能 / JDBC 均有完整入口与专属观察方式\n09 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 10,
+      "viewport": [
+        390,
+        844
+      ],
+      "screenshot": "390x844-slide-010.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "11 条现有路由，都有明确归宿"
+        }
+      ],
+      "stage": {
+        "width": 390,
+        "height": 219.375
+      },
+      "text": "09 / 原功能覆盖\nNO FEATURE DROPPED\n11 条现有路由，都有明确归宿\n现有板块\t当前入口 / 关键能力\t新方案位置\t保留方式\t验证状态\n开始页\t#/start · 创建 / 打开 / 最近 / 示例 / 引导\t工作区 › 开始\t任务入口 + 最近列表 + 下一步\t源码 + 运行\n数据库管理\t#/db · 数据 / 结构 / 索引 / RID CRUD\t工作区 › 数据库管理\t对象树 + 三页签 + 宽表内滚动\t源码 + 运行\nSQL 工作台\t#/sql · CodeMirror / 结果 / 计划 / 历史 / 事务\t工作区 › SQL 工作台\t编辑器与结果主导，五种状态\t源码 + 运行\n索引与计划\t#/index · CRUD / B+ 树 / Explain\t分析与观察\t索引—节点—计划同一上下文\t源码 + 原型\n六类实验\t#/lab/* · 存储 / 流水线 / 事务 / 恢复 / 性能 / JDBC\t教学实验室（可展开）\t统一五步框架 + 不同观察器\t源码 + 原型\n帮助\t#/help · 架构 / 方言 / 文档\t固定底部入口\t上手 / 限制 / 错误 / 快捷键\t源码 + 原型\n完整映射与 API 对照见 DESIGN_SPEC.md\n10 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    },
+    {
+      "slide": 11,
+      "viewport": [
+        390,
+        844
+      ],
+      "screenshot": "390x844-slide-011.png",
+      "issues": [
+        {
+          "kind": "overflow",
+          "tag": "H2",
+          "text": "先统一外壳，再迁移高频任务，最后补 API 缺口"
+        }
+      ],
+      "stage": {
+        "width": 390,
+        "height": 219.375
+      },
+      "text": "10 / 最小落地顺序\nDESIGN READY · IMPLEMENTATION NOT STARTED\n先统一外壳，再迁移高频任务，最后补 API 缺口\n01\n纯视觉调整\n\n把 tokens、顶栏、主导航、按钮、表格、状态样式集中到现有 styles.css 与 ui.tsx。\n\n低风险 · 不改 API\n02\n前端交互调整\n\n在 DatabasePage / SqlPage / IndexPlanPage 中引入对象头、持久状态和统一实验框架。\n\n中风险 · 保留 CodeMirror\n03\n需 API 支持的建议\n\n仅在审批后补充停止执行、NULL 能力声明、实验目录一致性等接口；不改变 SQL 语义或文件格式。\n\n单独评审 · 后端契约测试\n本轮边界\n没有修改正式 React 页面、Java 内核、API、启动脚本、依赖或数据库格式；没有发布、部署、提交或推送。\n打开可点击高保真原型 →\n下一状态：设计方案与原型待审核\n11 / 11",
+      "font": "\"Microsoft YaHei UI\", \"Microsoft YaHei\", DengXian, sans-serif"
+    }
+  ],
+  "blocked_external": [],
+  "page_errors": [],
+  "passed": false
+}
