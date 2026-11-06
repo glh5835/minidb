@@ -24,7 +24,9 @@ const navigation = [
   ] },
 ] as const
 
-const featuredRoutes = ['/start', '/db', '/sql', '/index', '/lab/storage', '/lab/pipeline', '/lab/txn', '/lab/recovery']
+const featuredRoutes = [
+  '/start', '/db', '/sql', '/index', '/lab/storage', '/lab/pipeline', '/lab/txn', '/lab/recovery', '/lab/perf', '/lab/jdbc',
+]
 
 /** 全局布局：顶部状态栏 + 左侧导航 + 主工作区（计划书 §4/§5） */
 export function StudioLayout({ children, route }: { children: React.ReactNode; route: string }) {

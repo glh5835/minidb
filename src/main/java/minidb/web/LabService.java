@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -31,6 +32,8 @@ import java.util.concurrent.TimeoutException;
 public final class LabService {
     private final DatabaseRegistry registry;
     private final Path labDir;
+    private final Object perfRunLock = new Object();
+    private final Object jdbcRunLock = new Object();
 
     public LabService(DatabaseRegistry registry, Path dataDir) {
         this.registry = registry;
@@ -718,10 +721,18 @@ public final class LabService {
 
     // ================= 性能实验 =================
 
+    private static final String PERF_LOOKUP = "SELECT * FROM perf_t WHERE id = ";
+
     public Map<String, Object> perfRun(Map<String, Object> body) {
+        synchronized (perfRunLock) {
+            return runPerfExperiment(body);
+        }
+    }
+
+    private Map<String, Object> runPerfExperiment(Map<String, Object> body) {
         int rows = Math.min(Math.max(Json.intVal(body.get("rows"), 10000), 100), 200000);
         int queries = Math.min(Math.max(Json.intVal(body.get("queries"), 50), 1), 1000);
-        int warmup = Math.min(Json.intVal(body.get("warmup"), 5), 50);
+        int warmup = Math.min(Math.max(Json.intVal(body.get("warmup"), 5), 0), 50);
         DatabaseRegistry.Entry e = resetLabFile("perf");
         Map<String, Object> data = new LinkedHashMap<>();
         try {
@@ -740,50 +751,21 @@ public final class LabService {
             }
             ex.commit(load);
             data.put("rowsLoaded", rows);
-            // 无索引基线：预热 + 计时（真实执行）
-            long seqTotal = 0;
-            for (int i = 0; i < warmup; i++)
-                ex.execute("SELECT * FROM perf_t WHERE id = " + (i + 1));
-            List<Long> seqSamples = new ArrayList<>();
+            // 建索引前后使用同一组随机 ID，查询文本在计时前生成。
+            var random = ThreadLocalRandom.current();
+            List<String> workload = new ArrayList<>(queries);
             for (int i = 0; i < queries; i++) {
-                int id = 1 + (int) (Math.random() * rows);
-                long t0 = System.nanoTime();
-                ex.execute("SELECT * FROM perf_t WHERE id = " + id);
-                long ms = (System.nanoTime() - t0) / 1_000_000;
-                seqSamples.add(ms);
-                seqTotal += ms;
+                workload.add(PERF_LOOKUP + random.nextInt(1, rows + 1));
             }
-            data.put("planSeqScan", ex.explain("SELECT * FROM perf_t WHERE id = 1"));
-            // 建索引
+            var seq = measureLookups(ex, workload, warmup, "SeqScan（无索引）");
+            data.put("planSeqScan", ex.explain(PERF_LOOKUP + "1"));
             ex.execute("CREATE INDEX idx_perf_id ON perf_t(id)");
-            for (int i = 0; i < warmup; i++)
-                ex.execute("SELECT * FROM perf_t WHERE id = " + (i + 1));
-            long idxTotal = 0;
-            List<Long> idxSamples = new ArrayList<>();
-            for (int i = 0; i < queries; i++) {
-                int id = 1 + (int) (Math.random() * rows);
-                long t0 = System.nanoTime();
-                ex.execute("SELECT * FROM perf_t WHERE id = " + id);
-                long ms = (System.nanoTime() - t0) / 1_000_000;
-                idxSamples.add(ms);
-                idxTotal += ms;
-            }
-            // 执行计划对比（真实 Optimizer：建索引前 SeqScan，建索引后 IndexScan）
-            data.put("planIndexScan", ex.explain("SELECT * FROM perf_t WHERE id = 1"));
-            Map<String, Object> seq = new LinkedHashMap<>();
-            seq.put("mode", "SeqScan（无索引）");
-            seq.put("avgMs", round1((double) seqTotal / queries));
-            seq.put("totalMs", seqTotal);
-            seq.put("maxMs", seqSamples.stream().max(Long::compare).orElse(0L));
-            Map<String, Object> idx = new LinkedHashMap<>();
-            idx.put("mode", "IndexScan（B+ 树索引 idx_perf_id）");
-            idx.put("avgMs", round1((double) idxTotal / queries));
-            idx.put("totalMs", idxTotal);
-            idx.put("maxMs", idxSamples.stream().max(Long::compare).orElse(0L));
+            var idx = measureLookups(ex, workload, warmup, "IndexScan（B+ 树索引 idx_perf_id）");
+            data.put("planIndexScan", ex.explain(PERF_LOOKUP + "1"));
             data.put("results", List.of(seq, idx));
             data.put("environment", Map.of(
                     "rows", rows, "queries", queries, "warmup", warmup,
-                    "sql", "SELECT * FROM perf_t WHERE id = ?（随机 id 点查）",
+                    "sql", PERF_LOOKUP + "?（随机 id 点查）",
                     "ranAt", java.time.LocalDateTime.now().toString(),
                     "note", "本次为实时测量结果；PERF.md 中的数据为历史测试结果"));
         } finally {
@@ -792,14 +774,34 @@ public final class LabService {
         return data;
     }
 
-    private static double round1(double v) {
-        return Math.round(v * 10.0) / 10.0;
+    private static Map<String, Object> measureLookups(Executor ex, List<String> workload, int warmup, String mode) {
+        for (int id = 1; id <= warmup; id++) {
+            ex.execute(PERF_LOOKUP + id);
+        }
+        long totalNanos = 0;
+        long maxNanos = 0;
+        for (String sql : workload) {
+            long start = System.nanoTime();
+            ex.execute(sql);
+            long nanos = System.nanoTime() - start;
+            totalNanos += nanos;
+            maxNanos = Math.max(maxNanos, nanos);
+        }
+        double totalMs = totalNanos / 1_000_000.0;
+        return Map.of("mode", mode, "avgMs", totalMs / workload.size(),
+                "totalMs", totalMs, "maxMs", maxNanos / 1_000_000.0);
     }
 
     // ================= JDBC 实验 =================
 
     /** 真实 JDBC 流程（MiniDbDriver），独立实验库，输出代码 + 日志 + 数据库变化。 */
     public Map<String, Object> jdbcRun() {
+        synchronized (jdbcRunLock) {
+            return runJdbcExperiment();
+        }
+    }
+
+    private Map<String, Object> runJdbcExperiment() {
         // JDBC 驱动会自己打开 Database 实例（MiniDbConnection → Database.open），
         // 因此该实验文件绝不进注册表，保证"同路径单实例"。
         Path file = labFile("jdbc");
@@ -811,56 +813,82 @@ public final class LabService {
         } catch (Exception e) {
             throw labError("无法重置 JDBC 实验库: " + e.getMessage());
         }
-        List<String> log = new ArrayList<>();
+        List<JdbcStep> steps = new ArrayList<>();
         List<Map<String, Object>> finalRows = new ArrayList<>();
+        Map<String, Object> rollback;
         try (var conn = new minidb.jdbc.MiniDbDriver().connect(
                 "jdbc:minidb:" + file, new java.util.Properties())) {
-            log.add("Connection conn = DriverManager.getConnection(\"jdbc:minidb:jdbc.exp.db\")");
-            log.add("// autoCommit = " + conn.getAutoCommit());
+            boolean autoCommit = conn.getAutoCommit();
+            steps.add(new JdbcStep("connect", autoCommit ? "自动提交开启" : "自动提交关闭", List.of(
+                    "new MiniDbDriver().connect(\"jdbc:minidb:jdbc.exp.db\", properties)",
+                    "conn.getAutoCommit() → " + autoCommit)));
             // 1. Statement DDL
             try (var st = conn.createStatement()) {
                 st.execute("CREATE TABLE user (id INT, name VARCHAR(30), score DOUBLE)");
-                log.add("st.execute(\"CREATE TABLE user (...)\")  → 建表成功");
+                steps.add(new JdbcStep("create", "建表成功", List.of(
+                        "st.execute(\"CREATE TABLE user (id INT, name VARCHAR(30), score DOUBLE)\") → 建表成功")));
             }
             // 2. PreparedStatement 批量插入
             try (var ps = conn.prepareStatement("INSERT INTO user VALUES (?, ?, ?)")) {
                 String[] names = {"张三", "李四", "王五"};
-                for (int i = 0; i < 3; i++) {
+                int inserted = 0;
+                for (int i = 0; i < names.length; i++) {
                     ps.setInt(1, i + 1);
                     ps.setString(2, names[i]);
                     ps.setDouble(3, 90.0 - i * 5);
-                    ps.executeUpdate();
+                    inserted += ps.executeUpdate();
                 }
-                log.add("PreparedStatement: INSERT INTO user VALUES (?,?,?)  ×3 → 3 行已插入");
+                steps.add(new JdbcStep("insert", "插入 " + inserted + " 行", List.of(
+                        "PreparedStatement: INSERT INTO user VALUES (?, ?, ?) ×" + names.length
+                                + " → " + inserted + " 行已插入")));
             }
             // 3. ResultSet 查询
             try (var st = conn.createStatement();
                  var rs = st.executeQuery("SELECT id, name, score FROM user ORDER BY id")) {
-                while (rs.next())
-                    log.add("ResultSet 遍历: " + rs.getInt("id") + " | "
+                List<String> queryLog = new ArrayList<>();
+                while (rs.next()) {
+                    queryLog.add("ResultSet 遍历: " + rs.getInt("id") + " | "
                             + rs.getString("name") + " | " + rs.getDouble("score"));
+                }
+                steps.add(new JdbcStep("query", "读取 " + queryLog.size() + " 行", queryLog));
             }
             // 4. 事务：回滚演示
             conn.setAutoCommit(false);
+            JdbcScore before = queryJdbcScore(conn, 1);
             try (var st = conn.createStatement()) {
                 st.executeUpdate("UPDATE user SET score = 0 WHERE id = 1");
-                log.add("conn.setAutoCommit(false); UPDATE score→0（未提交）");
             }
+            JdbcScore pending = queryJdbcScore(conn, 1);
             conn.rollback();
-            log.add("conn.rollback() → 数据恢复（查询验证 score=" + queryScore(conn, 1) + "）");
+            JdbcScore restored = queryJdbcScore(conn, 1);
+            rollback = Map.of("id", 1, "name", before.name(), "before", before.score(),
+                    "pending", pending.score(), "restored", restored.score());
+            steps.add(new JdbcStep("rollback",
+                    before.score() != pending.score() && before.score() == restored.score()
+                            ? restored.name() + "恢复为 " + restored.score()
+                            : "回滚后分数为 " + restored.score(),
+                    List.of("conn.setAutoCommit(false); SELECT name, score FROM user WHERE id = 1 → " + before.score(),
+                            "UPDATE user SET score = 0 WHERE id = 1 → 查询分数为 " + pending.score() + "（未提交）",
+                            "conn.rollback() → 查询验证 score=" + restored.score())));
             // 5. 事务：提交演示
+            int updated;
             try (var ps = conn.prepareStatement("UPDATE user SET score = ? WHERE name = ?")) {
                 ps.setDouble(1, 99.5);
                 ps.setString(2, "李四");
-                ps.executeUpdate();
+                updated = ps.executeUpdate();
             }
             conn.commit();
-            log.add("UPDATE score→99.5 WHERE name='李四'; conn.commit() → 提交生效");
-            conn.setAutoCommit(true);
+            JdbcScore committed = queryJdbcScore(conn, 2);
+            steps.add(new JdbcStep("commit", updated == 1
+                    ? committed.name() + "提交后为 " + committed.score() : "提交更新 " + updated + " 行",
+                    List.of("UPDATE user SET score = 99.5 WHERE name = '李四' → " + updated + " 行",
+                            "conn.commit() → 查询验证 score=" + committed.score())));
             // 6. DELETE
+            conn.setAutoCommit(true);
             try (var st = conn.createStatement()) {
                 int n = st.executeUpdate("DELETE FROM user WHERE id = 3");
-                log.add("DELETE FROM user WHERE id = 3 → " + n + " 行");
+                steps.add(new JdbcStep("delete", n == 1 ? "已删除 id = 3" : "已删除 " + n + " 行",
+                        List.of("conn.setAutoCommit(true); DELETE FROM user WHERE id = 3 → " + n + " 行")));
             }
             // 最终数据
             try (var st = conn.createStatement();
@@ -877,17 +905,24 @@ public final class LabService {
             throw labError("JDBC 实验失败: " + ex.getMessage());
         }
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("log", log);
+        data.put("log", steps.stream().flatMap(step -> step.logs().stream()).toList());
+        data.put("steps", steps);
+        data.put("rollback", rollback);
         data.put("rows", finalRows);
         data.put("code", JDBC_CODE_SAMPLE);
         return data;
     }
 
-    private static double queryScore(java.sql.Connection conn, int id) throws Exception {
-        try (var ps = conn.prepareStatement("SELECT score FROM user WHERE id = ?")) {
+    private record JdbcStep(String id, String summary, List<String> logs) {}
+
+    private record JdbcScore(String name, double score) {}
+
+    private static JdbcScore queryJdbcScore(java.sql.Connection conn, int id) throws java.sql.SQLException {
+        try (var ps = conn.prepareStatement("SELECT name, score FROM user WHERE id = ?")) {
             ps.setInt(1, id);
             try (var rs = ps.executeQuery()) {
-                return rs.next() ? rs.getDouble(1) : -1;
+                if (!rs.next()) throw new java.sql.SQLException("找不到实验记录 id=" + id);
+                return new JdbcScore(rs.getString("name"), rs.getDouble("score"));
             }
         }
     }
@@ -897,16 +932,28 @@ public final class LabService {
             Statement st = conn.createStatement();
             st.execute("CREATE TABLE user (id INT, name VARCHAR(30), score DOUBLE)");
 
-            PreparedStatement ps = conn.prepareStatement("INSERT INTO user VALUES (?, ?, ?)");
-            ps.setInt(1, 1); ps.setString(2, "张三"); ps.setDouble(3, 90.0);
-            ps.executeUpdate();
+            try (PreparedStatement ps = conn.prepareStatement("INSERT INTO user VALUES (?, ?, ?)")) {
+                String[] names = {"张三", "李四", "王五"};
+                for (int i = 0; i < names.length; i++) {
+                    ps.setInt(1, i + 1);
+                    ps.setString(2, names[i]);
+                    ps.setDouble(3, 90.0 - i * 5);
+                    ps.executeUpdate();
+                }
+            }
 
-            ResultSet rs = st.executeQuery("SELECT id, name, score FROM user ORDER BY id");
-            while (rs.next()) { ... }
+            try (ResultSet rs = st.executeQuery("SELECT id, name, score FROM user ORDER BY id")) {
+                while (rs.next()) {
+                    System.out.println(rs.getString("name") + " " + rs.getDouble("score"));
+                }
+            }
 
             conn.setAutoCommit(false);
             st.executeUpdate("UPDATE user SET score = 0 WHERE id = 1");
             conn.rollback();   // 未提交修改被撤销
+            st.executeUpdate("UPDATE user SET score = 99.5 WHERE name = '李四'");
             conn.commit();     // 显式提交
+            conn.setAutoCommit(true);
+            st.executeUpdate("DELETE FROM user WHERE id = 3");
             """;
 }

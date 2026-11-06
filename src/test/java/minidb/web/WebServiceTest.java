@@ -492,12 +492,25 @@ class WebServiceTest {
     @Order(83)
     void perfAndJdbcLabs() {
         Map<String, Object> perf = labs.perfRun(Map.of("rows", 500, "queries", 30, "warmup", 3));
-        assertEquals(2, cast(perf.get("results")).size());
+        List<Map<String, Object>> timings = cast(perf.get("results"));
+        assertEquals(2, timings.size());
+        for (Map<String, Object> timing : timings) {
+            double average = ((Number) timing.get("avgMs")).doubleValue();
+            double total = ((Number) timing.get("totalMs")).doubleValue();
+            double max = ((Number) timing.get("maxMs")).doubleValue();
+            assertTrue(average > 0, "亚毫秒耗时不会被截断为零");
+            assertEquals(total, average * 30, 1e-9);
+            assertTrue(max >= average && max <= total);
+        }
         assertTrue(String.valueOf(perf.get("planSeqScan")).contains("SeqScan"));
         assertTrue(String.valueOf(perf.get("planIndexScan")).contains("IndexScan"));
 
         Map<String, Object> jdbc = labs.jdbcRun();
         assertTrue(cast(jdbc.get("log")).stream().anyMatch(l -> l.toString().contains("rollback")));
-        assertEquals(2, cast(jdbc.get("rows")).size(), "删除 id=3 后剩两行");
+        assertEquals(7, cast(jdbc.get("steps")).size());
+        assertEquals(Map.of("id", 1, "name", "张三", "before", 90.0, "pending", 0.0, "restored", 90.0),
+                jdbc.get("rollback"));
+        assertEquals(List.of(Map.of("id", 1, "name", "张三", "score", 90.0),
+                Map.of("id", 2, "name", "李四", "score", 99.5)), jdbc.get("rows"));
     }
 }

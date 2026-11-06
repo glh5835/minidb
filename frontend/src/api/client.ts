@@ -1,6 +1,6 @@
 import type {
-  ApiEnvelope, BTreeSnapshot, BufferPoolSnapshot, IndexInfo, LockSnapshot, PlanResult,
-  RowsPage, SchemaInfo, SessionState, SqlExecResult, TableInfo, TxnState, WalRecord,
+  ApiEnvelope, BTreeSnapshot, BufferPoolSnapshot, IndexInfo, JdbcLabResult, LockSnapshot,
+  PerfLabResult, PlanResult, RowsPage, SchemaInfo, SessionState, SqlExecResult, TableInfo, TxnState, WalRecord,
 } from '../types'
 
 const BASE = '/api/v1'
@@ -158,7 +158,7 @@ export const api = {
     bpAct: (op: string, extra?: Record<string, unknown>) =>
       call<BufferPoolSnapshot>('POST', '/labs/bp/act', { op, ...extra }),
     perfRun: (rows: number, queries: number, warmup: number) =>
-      call<Record<string, unknown>>('POST', '/labs/perf/run', { rows, queries, warmup }),
-    jdbcRun: () => call<Record<string, unknown>>('POST', '/labs/jdbc/run', {}),
+      call<PerfLabResult>('POST', '/labs/perf/run', { rows, queries, warmup }),
+    jdbcRun: () => call<JdbcLabResult>('POST', '/labs/jdbc/run', {}),
   },
 }

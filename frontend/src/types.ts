@@ -161,6 +161,27 @@ export interface WalRecord {
   hasAfter: boolean
 }
 
+// 实验结果
+export interface PerfLabResult {
+  rowsLoaded: number
+  results: { mode: string; avgMs: number; totalMs: number; maxMs: number }[]
+  environment: { rows: number; queries: number; warmup: number; sql: string; ranAt: string; note: string }
+  planSeqScan: string
+  planIndexScan: string
+}
+
+export interface JdbcLabResult {
+  log: string[]
+  steps: {
+    id: 'connect' | 'create' | 'insert' | 'query' | 'rollback' | 'commit' | 'delete'
+    summary: string
+    logs: string[]
+  }[]
+  rollback: { id: number; name: string; before: number; pending: number; restored: number }
+  rows: { id: number; name: string; score: number }[]
+  code: string
+}
+
 // 最近数据库（浏览器 localStorage，计划书 §6.2）
 export interface RecentDb {
   path: string
