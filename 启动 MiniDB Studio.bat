@@ -1,6 +1,13 @@
 @echo off
+setlocal
+rem Run the UTF-8 body in a fresh CMD after switching the console code page.
+if not defined _MINIDB_STUDIO_UTF8 (
+  chcp 65001 >nul
+  set "_MINIDB_STUDIO_UTF8=1"
+  "%ComSpec%" /d /s /c ""%~f0""
+  exit /b
+)
 rem MiniDB Studio 一键启动：检查 Java/端口 -> 启动 Web 服务器 -> 验证健康接口 -> 打开浏览器
-chcp 65001 >nul
 title MiniDB Studio
 cd /d "%~dp0"
 
@@ -20,7 +27,7 @@ set JAR=target\minidb-0.1.0-SNAPSHOT-studio.jar
 if not exist "%JAR%" (
   echo [错误] 未找到 %JAR%。
   echo 请先运行 build-studio.bat 完成构建（或确认 JAR 名称后修改本脚本）。
-  call :pause_if_needed
+  if not "%MINIDB_STUDIO_NO_PAUSE%"=="1" pause
   exit /b 1
 )
 
@@ -30,7 +37,7 @@ if errorlevel 1 (
   echo [错误] 端口 8080 已被占用，MiniDB Studio 未启动。
   echo 请关闭占用该端口的程序后重试。可运行：
   echo   netstat -ano ^| findstr ":8080"
-  call :pause_if_needed
+  if not "%MINIDB_STUDIO_NO_PAUSE%"=="1" pause
   exit /b 1
 )
 
@@ -43,14 +50,14 @@ powershell -NoProfile -Command "$timeout=30;$n=0;if([int]::TryParse($env:MINIDB_
 if errorlevel 2 (
   echo [错误] 端口 8080 有响应，但健康信息不属于 MiniDB Studio。
   echo 为避免打开错误页面，浏览器不会启动。请关闭占用端口的程序后重试。
-  call :pause_if_needed
+  if not "%MINIDB_STUDIO_NO_PAUSE%"=="1" pause
   exit /b 1
 )
 if errorlevel 1 (
   echo [错误] MiniDB Studio 未能在限定时间内通过健康检查。
   echo 服务可能启动失败或仍未就绪；请查看 "MiniDB-Studio-Server" 窗口中的错误信息后重试。
   echo 健康检查地址：%HEALTH_URL%
-  call :pause_if_needed
+  if not "%MINIDB_STUDIO_NO_PAUSE%"=="1" pause
   exit /b 1
 )
 
@@ -62,9 +69,5 @@ if not "%MINIDB_STUDIO_NO_BROWSER%"=="1" (
 echo.
 echo 提示：关闭本窗口不会停止服务；在任务栏关闭 "MiniDB-Studio-Server" 窗口即可停止。
 echo 仅本机可访问（127.0.0.1）。
-call :pause_if_needed
-exit /b 0
-
-:pause_if_needed
 if not "%MINIDB_STUDIO_NO_PAUSE%"=="1" pause
 exit /b 0

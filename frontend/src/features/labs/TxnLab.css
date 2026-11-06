@@ -427,7 +427,7 @@
 
 .txn-view .txn-lower {
   display: grid;
-  grid-template-columns: 1.55fr .95fr .92fr;
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, .95fr) minmax(0, .92fr);
   gap: 14px;
 }
 

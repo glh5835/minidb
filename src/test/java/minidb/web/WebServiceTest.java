@@ -474,9 +474,18 @@ class WebServiceTest {
         assertTrue(((Number) st.get("rowCount")).intValue() >= 2);
         assertNotNull(st.get("pages"));
 
-        Map<String, Object> act = labs.storageAct(Map.of("table", "var_demo", "op", "insertVar",
+        int fixedRows = ((Number) st.get("rowCount")).intValue();
+        int varRows = ((Number) labs.storageState("var_demo").get("rowCount")).intValue();
+        Map<String, Object> act = labs.storageAct(Map.of("table", "fixed_demo", "op", "insertVar",
                 "id", 50, "note", "新插入的记录"));
-        assertTrue(act.toString().contains("rows"), "动作后返回最新状态");
+        assertEquals("var_demo：1 行已插入", act.get("result"));
+        assertEquals(fixedRows, ((Number) map(act.get("state")).get("rowCount")).intValue());
+        assertEquals(varRows + 1, ((Number) labs.storageState("var_demo").get("rowCount")).intValue());
+
+        Map<String, Object> fixed = labs.storageAct(Map.of("table", "var_demo", "op", "insertFixed", "id", 51));
+        assertEquals("fixed_demo：1 行已插入", fixed.get("result"));
+        assertEquals(varRows + 1, ((Number) map(fixed.get("state")).get("rowCount")).intValue());
+        assertEquals(fixedRows + 1, ((Number) labs.storageState("fixed_demo").get("rowCount")).intValue());
 
         Map<String, Object> bp = labs.bufferPoolSetup();
         assertTrue(((Number) bp.get("size")).intValue() > 0);

@@ -591,15 +591,18 @@ public final class LabService {
             String op = Json.str(body, "op", "insert");
             Map<String, Object> result = new LinkedHashMap<>();
             switch (op) {
-                case "insertFixed" -> result.put("result",
-                        ex.execute("INSERT INTO fixed_demo VALUES ("
+                case "insertFixed" -> {
+                    String target = "fixed_demo";
+                    result.put("result", target + "：" + ex.execute("INSERT INTO " + target + " VALUES ("
                                 + Json.intVal(body.get("id"), 0) + ", "
                                 + Json.intVal(body.get("num"), 0) + ", "
                                 + Json.intVal(body.get("score"), 0) + ".0)").message());
+                }
                 case "insertVar" -> {
+                    String target = "var_demo";
                     String note = Json.str(body, "note", "记录" + System.currentTimeMillis() % 1000);
-                    result.put("result", ex.execute(
-                            "INSERT INTO var_demo VALUES (" + Json.intVal(body.get("id"), 0)
+                    result.put("result", target + "：" + ex.execute(
+                            "INSERT INTO " + target + " VALUES (" + Json.intVal(body.get("id"), 0)
                                     + ", '" + note.replace("'", "''") + "')").message());
                 }
                 case "delete" -> {
