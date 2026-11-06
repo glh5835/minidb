@@ -1,330 +1,502 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiFailure } from '../../api/client'
+import { StudioIcon } from '../../components/StudioIcon'
+import { ErrorBox, Modal } from '../../components/ui'
 import { useApp } from '../../stores/app'
-import { Empty, ErrorBox, Modal, PlanTree } from '../../components/ui'
-import { nav } from '../../router'
-import type { BTreeNode, BTreeSnapshot, IndexInfo, SchemaInfo } from '../../types'
+import type { BTreeNode, BTreeSnapshot, IndexInfo, PlanNode, PlanResult, SchemaInfo } from '../../types'
+import './IndexPlanPage.css'
 
-const NODE_W = 108
-const NODE_H = 46
-const GAP_X = 14
-const GAP_Y = 70
+const NODE_WIDTH = 180
+const NODE_HEIGHT = 64
+const HORIZONTAL_GAP = 28
+const VERTICAL_GAP = 44
+const PADDING = 18
 
-/** 索引与计划（计划书 §17-§19）：索引管理 + B+ 树快照 SVG + 执行计划查看 */
+type ReadResult<T> = { data: T } | { error: ApiFailure | string }
+
+function readError(error: unknown): ApiFailure | string {
+  return error instanceof ApiFailure ? error : '读取失败，请重试。'
+}
+
+function indexKeyType(type: string) {
+  if (type === 'STRING') return 'VARCHAR'
+  if (type === 'LONG') return 'INT / BIGINT'
+  return type
+}
+
 export default function IndexPlanPage() {
-  const { session, refresh, confirm, notify } = useApp()
-  const [indexes, setIndexes] = useState<IndexInfo[]>([])
-  const [error, setError] = useState<ApiFailure | null>(null)
-  const [selected, setSelected] = useState<string | null>(null)
-  const [snap, setSnap] = useState<BTreeSnapshot | null>(null)
-  const [node, setNode] = useState<BTreeNode | null>(null)
+  const { ready, session } = useApp()
+
+  return (
+    <section className="index-view">
+      <header className="index-heading">
+        <h1>索引与计划</h1>
+        <p>管理唯一索引、查看 B+ 树节点与叶链，分析 SELECT 查询的执行计划。</p>
+      </header>
+      {!ready ? <p className="index-state" role="status">正在连接 MiniDB…</p> : session?.hasDb ? (
+        <IndexWorkspace key={session.sessionId + '/' + session.dbPath} />
+      ) : (
+        <div className="card index-empty">
+          <span className="index-object-mark"><StudioIcon name="database" /></span>
+          <p>尚未打开数据库</p>
+          <a className="btn primary" href="#/start">去开始页</a>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function IndexWorkspace() {
+  const { session, tables, refresh, confirm, notify } = useApp()
+  const [revision, setRevision] = useState(0)
+  const [response, setResponse] = useState<{ revision: number; result: ReadResult<IndexInfo[]> } | null>(null)
+  const [selection, setSelection] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
-  const [planSql, setPlanSql] = useState('SELECT * FROM student WHERE id = 1;')
-  const [plan, setPlan] = useState<{ text: string; tree: import('../../types').PlanNode[] } | null>(null)
-  const [planErr, setPlanErr] = useState<ApiFailure | null>(null)
-
-  const load = useCallback(async () => {
-    if (!session?.hasDb) return
-    try {
-      const list = await api.indexes()
-      setIndexes(list)
-      if (selected && !list.some((ix) => ix.name === selected)) setSelected(null)
-    } catch (e) {
-      if (e instanceof ApiFailure) setError(e)
-    }
-  }, [session, selected])
-
-  useEffect(() => { load() }, [load])
-
-  const loadBtree = useCallback(async (name: string) => {
-    try {
-      setSnap(await api.btree(name))
-    } catch (e) {
-      if (e instanceof ApiFailure) setError(e)
-    }
-  }, [])
+  const [dropping, setDropping] = useState(false)
+  const [dropError, setDropError] = useState<ApiFailure | string | null>(null)
 
   useEffect(() => {
-    if (selected) loadBtree(selected)
-    else setSnap(null)
-  }, [selected, loadBtree])
+    let current = true
+    void api.indexes().then((data) => {
+      if (current) setResponse({ revision, result: { data } })
+    }, (error: unknown) => {
+      if (current) setResponse({ revision, result: { error: readError(error) } })
+    })
+    return () => { current = false }
+  }, [revision])
 
-  if (!session?.hasDb) {
-    return <Empty icon="🗂️" message="尚未打开数据库">
-      <button className="btn primary" onClick={() => nav('/start')}>去开始页</button>
-    </Empty>
-  }
+  const result = response?.revision === revision ? response.result : null
+  const indexes = result && 'data' in result ? result.data : []
+  const selected = indexes.find((index) => index.name === selection) ?? indexes[0]
+  const transactionActive = session?.txn.active ?? false
+  const actionsDisabled = dropping || createOpen || transactionActive
+  const reload = () => setRevision((current) => current + 1)
 
-  const doDrop = async (name: string) => {
-    if (!(await confirm({
-      title: '删除索引',
-      message: `确定删除索引 ${name}？该 B+ 树的全部节点页将被释放。`,
-      actionText: `删除索引 ${name}`,
-    }))) return
+  const drop = async (name: string) => {
+    setDropping(true)
+    setDropError(null)
     try {
+      if (!await confirm({
+        title: '删除索引',
+        message: '确定删除索引 ' + name + '？该 B+ 树的全部节点页将被释放。',
+        actionText: '删除索引 ' + name,
+      })) return
       await api.dropIndex(name)
-      notify(`索引 ${name} 已删除`, 'success')
-      await load()
+      notify('索引 ' + name + ' 已删除', 'success')
+      if (selected?.name === name) setSelection('')
+      reload()
       await refresh()
-    } catch (e) {
-      if (e instanceof ApiFailure) notify(e.message, 'error')
+    } catch (error) {
+      setDropError(error instanceof ApiFailure ? error : '删除索引失败。')
+    } finally {
+      setDropping(false)
     }
   }
 
   return (
-    <div>
-      <h1 className="page-title">索引与计划</h1>
-      <p className="page-sub">管理真实 B+ 树索引（均为唯一索引）· 查看结构快照 · 查看优化器执行计划</p>
-      {error && <ErrorBox error={error} />}
-
-      <div className="row" style={{ alignItems: 'flex-start' }}>
-        <div className="card" style={{ width: 470, flexShrink: 0 }}>
-          <div className="row" style={{ justifyContent: 'space-between' }}>
-            <h2>索引</h2>
-            <button className="btn small primary" onClick={() => setCreateOpen(true)}>＋ 创建索引</button>
+    <>
+      <div className="index-layout">
+        <aside className="card index-list" aria-label="数据库索引">
+          <div className="index-list-head">
+            <h2>索引列表 {result && 'data' in result && <span className="index-count">{indexes.length}</span>}</h2>
+            <button
+              className="btn primary" type="button" disabled={actionsDisabled || !tables.length}
+              title={transactionActive ? '请结束当前事务后再创建索引' : undefined}
+              onClick={() => { setDropError(null); setCreateOpen(true) }}
+            ><StudioIcon name="plus" />创建索引</button>
           </div>
-          {indexes.length === 0 ? <div className="muted">暂无索引。</div> : (
-            <div className="table-wrap">
-              <table className="grid">
-                <thead><tr><th>索引 / 表.列</th><th>规模</th><th>操作</th></tr></thead>
-                <tbody>
-                  {indexes.map((ix) => (
-                    <tr key={ix.name} style={{ background: selected === ix.name ? 'var(--primary-light)' : undefined }}>
-                      <td style={{ cursor: 'pointer' }} onClick={() => setSelected(ix.name)}>
-                        <b className="mono">{ix.name}</b><br />
-                        <span className="muted" style={{ fontSize: 12 }}>{ix.table}.{ix.column} · {ix.keyType}</span>
-                      </td>
-                      <td className="muted" style={{ fontSize: 12 }}>
-                        高 {ix.height} · {ix.totalKeys} 键<br />
-                        叶 {ix.leafNodes} · 利用率 {(ix.avgLeafUtilization * 100).toFixed(0)}%
-                      </td>
-                      <td>
-                        <div className="cell-actions">
-                          <button className="btn small" onClick={() => setSelected(ix.name)}>查看结构</button>
-                          <button className="btn small danger" onClick={() => doDrop(ix.name)}>删除</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+          {dropError && <div role="alert"><ErrorBox error={dropError} /></div>}
+          {!result && <p className="index-state" role="status">正在读取索引…</p>}
+          {result && 'error' in result && (
+            <div className="index-read-error" role="alert">
+              <ErrorBox error={result.error} />
+              <button className="btn small" type="button" onClick={reload}>重试读取索引</button>
             </div>
           )}
-        </div>
+          {result && 'data' in result && (
+            <div className="index-items">
+              {!indexes.length && <p className="index-state">暂无索引。</p>}
+              {indexes.map((index) => (
+                <div className="index-object" key={index.name} data-selected={index.name === selected?.name}>
+                  <button
+                    className="index-object-button" type="button" aria-label={'查看 ' + index.name + ' 结构'}
+                    aria-pressed={index.name === selected?.name} onClick={() => setSelection(index.name)}
+                  >
+                    <span className="index-object-mark"><StudioIcon name="key" /></span>
+                    <span className="index-object-main">
+                      <strong className="mono" title={index.name}>{index.name}</strong>
+                      <span title={index.table + '.' + index.column}>{index.table}.{index.column} · {indexKeyType(index.keyType)}</span>
+                      <span>高 {index.height} · {index.totalKeys} 键</span>
+                    </span>
+                  </button>
+                  <button className="index-remove" type="button" aria-label={'删除索引 ' + index.name} disabled={actionsDisabled}
+                    title={transactionActive ? '请结束当前事务后再删除索引' : '删除索引 ' + index.name}
+                    onClick={() => drop(index.name)}><StudioIcon name="trash" /></button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="index-list-foot"><StudioIcon name="info" /><span>选择索引查看节点分布。</span></div>
+        </aside>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="card">
-            <h2>B+ 树结构{selected ? ` · ${selected}` : ''}</h2>
-            {!selected ? <div className="muted">选择左侧索引查看真实 B+ 树快照（后端只读接口 → 前端 SVG 渲染）。</div>
-              : !snap ? <div className="muted">加载中…</div>
-                : <BTreeSvg snap={snap} onNode={setNode} />}
-          </div>
-        </div>
+        {selected ? <TreePanel key={selected.name} index={selected} /> : (
+          <section className="card index-tree">
+            <header className="index-tree-head"><h2><StudioIcon name="tree" />B+ 树结构</h2></header>
+            <div className="index-empty"><p>选择左侧索引后查看 B+ 树快照。</p></div>
+          </section>
+        )}
       </div>
 
-      <div className="card">
-        <h2>执行计划</h2>
-        <div className="row">
-          <input type="text" style={{ flex: 1, fontFamily: 'var(--mono)' }} value={planSql}
-            onChange={(e) => setPlanSql(e.target.value)} />
-          <button className="btn primary" onClick={async () => {
-            setPlanErr(null)
-            try {
-              setPlan(await api.plan(planSql))
-            } catch (e) {
-              if (e instanceof ApiFailure) setPlanErr(e)
-            }
-          }}>查看计划</button>
-        </div>
-        {planErr && <ErrorBox error={planErr} />}
-        {plan && <div style={{ marginTop: 12 }}><PlanTree tree={plan.tree} text={plan.text} /></div>}
-      </div>
+      <ExecutionPlan indexRevision={revision} />
 
-      {createOpen && <CreateIndexModal onClose={() => setCreateOpen(false)} onDone={async () => {
+      {createOpen && <CreateIndexModal onClose={() => setCreateOpen(false)} onDone={(name) => {
         setCreateOpen(false)
-        await load()
-        await refresh()
+        setSelection(name)
+        reload()
+        void refresh()
       }} />}
-      {node && <NodeModal node={node} onClose={() => setNode(null)} />}
-    </div>
+    </>
   )
 }
 
-function CreateIndexModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+function CreateIndexModal({ onClose, onDone }: { onClose: () => void; onDone: (name: string) => void }) {
   const { tables, notify } = useApp()
   const [name, setName] = useState('')
   const [table, setTable] = useState(tables[0]?.name ?? '')
   const [column, setColumn] = useState('')
-  const [schema, setSchema] = useState<SchemaInfo | null>(null)
-  const [err, setErr] = useState<string | null>(null)
+  const [revision, setRevision] = useState(0)
+  const [response, setResponse] = useState<{ table: string; revision: number; result: ReadResult<SchemaInfo> } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<ApiFailure | string | null>(null)
 
   useEffect(() => {
-    if (table) api.schema(table).then((s) => {
-      setSchema(s)
-      setColumn(s.columns[0]?.name ?? '')
-    }).catch(() => setSchema(null))
-  }, [table])
+    if (!table) return
+    let current = true
+    void api.schema(table).then((data) => {
+      if (current) setResponse({ table, revision, result: { data } })
+    }, (error: unknown) => {
+      if (current) setResponse({ table, revision, result: { error: readError(error) } })
+    })
+    return () => { current = false }
+  }, [table, revision])
+
+  const schemaResult = response?.table === table && response.revision === revision ? response.result : null
+  const eligible = schemaResult && 'data' in schemaResult ? schemaResult.data.columns.filter((entry) =>
+    entry.type === 'INT' || entry.type === 'BIGINT' ||
+      (entry.type === 'VARCHAR' && entry.maxLength !== null && entry.maxLength > 0 && entry.maxLength <= 255),
+  ) : []
+  const selectedColumn = eligible.find((entry) => entry.name === column) ?? eligible[0]
 
   const create = async () => {
-    setErr(null)
-    if (!name.trim() || !table || !column) return
+    if (busy || !name.trim() || !table || !selectedColumn) return
+    setError(null)
+    setBusy(true)
     try {
-      await api.createIndex(name.trim(), table, column)
-      notify(`索引 ${name} 已创建`, 'success')
-      onDone()
-    } catch (e) {
-      if (e instanceof ApiFailure) setErr(e.message)
+      const indexName = name.trim()
+      await api.createIndex(indexName, table, selectedColumn.name)
+      notify('索引 ' + indexName + ' 已创建', 'success')
+      onDone(indexName)
+    } catch (error) {
+      setError(error instanceof ApiFailure ? error : '创建索引失败。')
+    } finally {
+      setBusy(false)
     }
   }
 
   return (
-    <Modal title="创建索引" onClose={onClose}>
-      <div style={{ display: 'grid', gap: 10 }}>
-        <label className="row"><span style={{ width: 80 }}>索引名</span>
-          <input type="text" style={{ flex: 1 }} value={name} placeholder="如 idx_student_age"
-            onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label className="row"><span style={{ width: 80 }}>表</span>
-          <select style={{ flex: 1 }} value={table} onChange={(e) => setTable(e.target.value)}>
-            {tables.map((t) => <option key={t.name}>{t.name}</option>)}
-          </select>
-        </label>
-        <label className="row"><span style={{ width: 80 }}>列</span>
-          <select style={{ flex: 1 }} value={column} onChange={(e) => setColumn(e.target.value)}>
-            {schema?.columns.map((c) => <option key={c.name}>{c.name}</option>)}
-          </select>
-        </label>
-        <p className="muted" style={{ fontSize: 12.5 }}>
-          MiniDB 的索引为 B+ 树唯一索引，键类型支持 INT / BIGINT / VARCHAR（≤255 字节）。NULL 值不入索引；
-          若现有数据存在重复值，建索引会失败。
-        </p>
-        {err && <ErrorBox error={err} />}
-      </div>
-      <div className="modal-actions">
-        <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" onClick={create}>创建索引</button>
-      </div>
+    <Modal title="创建索引" onClose={() => { if (!busy) onClose() }}>
+      <form onSubmit={(event) => { event.preventDefault(); void create() }}>
+        <div className="index-fields">
+          <label><span>索引名</span><input type="text" autoFocus required value={name} disabled={busy} placeholder="如 idx_student_age"
+            onChange={(event) => setName(event.target.value)} /></label>
+          <label><span>表</span><select value={table} disabled={busy} onChange={(event) => {
+            setTable(event.target.value)
+            setColumn('')
+            setError(null)
+          }}>{tables.map((entry) => <option key={entry.name}>{entry.name}</option>)}</select></label>
+          <label><span>列</span><select value={selectedColumn?.name ?? ''} disabled={busy || !eligible.length}
+            onChange={(event) => setColumn(event.target.value)}>
+            {eligible.length ? eligible.map((entry) => <option key={entry.name}>{entry.name}</option>) : (
+              <option value="">{!schemaResult ? '正在读取列…' : '没有可用列'}</option>
+            )}
+          </select></label>
+        </div>
+        <p className="index-create-note">索引键支持 INT、BIGINT 和 VARCHAR（列声明长度不超过 255 字节）。同一列的重复值会导致建索引失败。</p>
+        {schemaResult && 'error' in schemaResult && (
+          <div role="alert"><ErrorBox error={schemaResult.error} />
+            <button className="btn small" type="button" onClick={() => setRevision((current) => current + 1)}>重试读取列</button>
+          </div>
+        )}
+        {error && <div role="alert"><ErrorBox error={error} /></div>}
+        <div className="modal-actions">
+          <button className="btn" type="button" disabled={busy} onClick={onClose}>取消</button>
+          <button className="btn primary" type="submit" disabled={busy || !name.trim() || !table || !selectedColumn}>创建索引</button>
+        </div>
+      </form>
     </Modal>
+  )
+}
+
+function TreePanel({ index }: { index: IndexInfo }) {
+  const [revision, setRevision] = useState(0)
+  const [response, setResponse] = useState<{ revision: number; result: ReadResult<BTreeSnapshot> } | null>(null)
+  const [node, setNode] = useState<BTreeNode | null>(null)
+  const [selectedPage, setSelectedPage] = useState<number | null>(null)
+  const nodeTrigger = useRef<SVGGElement | null>(null)
+
+  useEffect(() => {
+    let current = true
+    void api.btree(index.name).then((data) => {
+      if (current) setResponse({ revision, result: { data } })
+    }, (error: unknown) => {
+      if (current) setResponse({ revision, result: { error: readError(error) } })
+    })
+    return () => { current = false }
+  }, [index.name, revision])
+
+  const result = response?.revision === revision ? response.result : null
+  const snapshot = result && 'data' in result ? result.data : null
+  const reload = () => {
+    setSelectedPage(null)
+    setRevision((current) => current + 1)
+  }
+
+  return (
+    <section className="card index-tree">
+      <header className="index-tree-head">
+        <div><h2><StudioIcon name="tree" />B+ 树结构</h2><p className="mono" title={index.name}>{index.name} · {index.table}.{index.column}</p></div>
+        <button className="btn small" type="button" disabled={!result} onClick={reload}><StudioIcon name="refresh" />刷新结构</button>
+      </header>
+      {!result && <div className="index-empty" role="status"><p>正在读取 B+ 树快照…</p></div>}
+      {result && 'error' in result && <div className="index-read-error" role="alert"><ErrorBox error={result.error} /></div>}
+      {snapshot && (
+        <>
+          <div className="index-meta" aria-label="B+ 树快照概要">
+            <span>树高 <strong>{snapshot.height}</strong></span>
+            <span>节点 <strong>{snapshot.nodes.length}</strong></span>
+            <span>根页 <strong>{snapshot.root}</strong></span>
+            <span>键数 <strong>{snapshot.nodes.reduce((total, entry) => total + (entry.kind === 'LEAF' ? entry.keys.length : 0), 0)}</strong></span>
+            <span>键类型 <strong>{snapshot.stringKeys ? 'VARCHAR' : 'INT / BIGINT'}</strong></span>
+          </div>
+          <BTreeCanvas snapshot={snapshot} selectedPage={selectedPage} onNode={(entry, trigger) => {
+            nodeTrigger.current = trigger
+            setSelectedPage(entry.pageId)
+            setNode(entry)
+          }} />
+          <div className="index-tree-foot">
+            <div className="index-legend">
+              <span><i className="index-legend-root" />内部节点</span><span><i />叶节点</span><span><i className="index-legend-chain" />叶链</span>
+              {selectedPage !== null && <span><i className="index-legend-selected" />所选节点路径</span>}
+            </div>
+            <span>选择节点查看键、RID 与页占用。</span>
+          </div>
+        </>
+      )}
+      {node && <NodeModal node={node} onClose={() => {
+        setNode(null)
+        nodeTrigger.current?.focus()
+      }} />}
+    </section>
+  )
+}
+
+interface NodePosition {
+  node: BTreeNode
+  children: NodePosition[]
+  x: number
+  depth: number
+}
+
+/** 叶节点按实际子页顺序铺开，内部节点居中于其子树。 */
+function layoutTree(snapshot: BTreeSnapshot) {
+  const byId = new Map(snapshot.nodes.map((node) => [node.pageId, node]))
+  const positioned = new Map<number, NodePosition>()
+  const parents = new Map<number, number>()
+  const visited = new Set<number>()
+  let nextColumn = 0
+  let depth = 0
+
+  function visit(id: number, level: number): NodePosition | null {
+    const node = byId.get(id)
+    if (!node || visited.has(id)) return null
+    visited.add(id)
+    depth = Math.max(depth, level)
+    const children = (node.children ?? []).map((child) => visit(child, level + 1)).filter((child): child is NodePosition => child !== null)
+    children.forEach((child) => parents.set(child.node.pageId, id))
+    const x = children.length ? (children[0].x + children[children.length - 1].x) / 2 :
+      PADDING + NODE_WIDTH / 2 + nextColumn++ * (NODE_WIDTH + HORIZONTAL_GAP)
+    const position = { node, children, x, depth: level }
+    positioned.set(id, position)
+    return position
+  }
+
+  visit(snapshot.root, 0)
+  const width = 2 * PADDING + Math.max(1, nextColumn) * NODE_WIDTH + Math.max(0, nextColumn - 1) * HORIZONTAL_GAP
+  const treeHeight = NODE_HEIGHT + depth * (NODE_HEIGHT + VERTICAL_GAP)
+  const height = Math.max(212, treeHeight + 2 * PADDING)
+  const positions = [...positioned.values()].sort((a, b) => a.depth - b.depth || a.x - b.x)
+  return { positioned, parents, positions, width, height, y: (level: number) => (height - treeHeight) / 2 + level * (NODE_HEIGHT + VERTICAL_GAP) }
+}
+
+function previewKeys(keys: string[]) {
+  if (!keys.length) return '（空）'
+  const clip = (value: string) => value.length > 8 ? value.slice(0, 8) + '…' : value
+  if (keys.length === 1) return clip(keys[0])
+  return clip(keys[0]) + (keys.length === 2 ? ' · ' : ' … ') + clip(keys[keys.length - 1])
+}
+
+function BTreeCanvas({ snapshot, selectedPage, onNode }: {
+  snapshot: BTreeSnapshot; selectedPage: number | null; onNode: (node: BTreeNode, trigger: SVGGElement) => void
+}) {
+  const { positioned, parents, positions, width, height, y } = useMemo(() => layoutTree(snapshot), [snapshot])
+  const canvas = useRef<HTMLDivElement>(null)
+  const rootX = positioned.get(snapshot.root)?.x
+  useLayoutEffect(() => {
+    if (canvas.current && rootX !== undefined) {
+      canvas.current.scrollLeft = Math.max(0, rootX - canvas.current.clientWidth / 2)
+    }
+  }, [snapshot, rootX])
+
+  const selectedPath = new Set<number>()
+  for (let page = selectedPage ?? undefined; page !== undefined; page = parents.get(page)) selectedPath.add(page)
+  const branches = positions.flatMap((parent) => parent.children.map((child) => ({ parent, child })))
+  const drawBranch = ({ parent, child }: typeof branches[number]) => {
+    const from = y(parent.depth) + NODE_HEIGHT
+    const middle = from + VERTICAL_GAP / 2
+    return <path key={parent.node.pageId + '-' + child.node.pageId} className="index-branch"
+      data-selected={selectedPath.has(child.node.pageId)}
+      d={'M ' + parent.x + ' ' + from + ' V ' + middle + ' H ' + child.x + ' V ' + y(child.depth)} />
+  }
+
+  if (!positions.length) return <div className="index-empty"><p>快照中没有可显示的节点。</p></div>
+
+  return (
+    <div ref={canvas} className="index-canvas" role="region" aria-label="B+ 树画布" tabIndex={0}>
+      <svg className="index-tree-svg" width={width} height={height} viewBox={'0 0 ' + width + ' ' + height} role="group" aria-label="B+ 树结构">
+        <defs>
+          <marker id="index-leaf-arrow" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="5" markerHeight="5" orient="auto">
+            <path d="M1 1 L5 3 L1 5" className="index-leaf-arrow" />
+          </marker>
+          <clipPath id="index-keys-clip"><rect x={12} y={27} width={NODE_WIDTH - 24} height={22} /></clipPath>
+        </defs>
+        {branches.filter(({ child }) => !selectedPath.has(child.node.pageId)).map(drawBranch)}
+        {branches.filter(({ child }) => selectedPath.has(child.node.pageId)).map(drawBranch)}
+        {positions.map(({ node, x, depth }) => {
+          const next = node.kind === 'LEAF' ? positioned.get(node.next) : undefined
+          if (!next || next.x <= x) return null
+          return <path key={'leaf-' + node.pageId} className="index-leaf-link" data-leaf-from={node.pageId} data-leaf-to={next.node.pageId}
+            d={'M ' + (x + NODE_WIDTH / 2) + ' ' + (y(depth) + NODE_HEIGHT / 2) + ' H ' + (next.x - NODE_WIDTH / 2 - 4)}
+            markerEnd="url(#index-leaf-arrow)" />
+        })}
+        {positions.map(({ node, x, depth }) => {
+          const root = node.pageId === snapshot.root
+          const label = node.kind === 'LEAF' ? '叶节点' : '内部节点'
+          return (
+            <g key={node.pageId} className="index-node" transform={'translate(' + (x - NODE_WIDTH / 2) + ' ' + y(depth) + ')'}
+              data-page-id={node.pageId} data-kind={node.kind} data-root={root} data-selected={selectedPage === node.pageId} role="button" tabIndex={0}
+              aria-label={'查看页 ' + node.pageId + '（' + label + '）'}
+              onClick={(event) => onNode(node, event.currentTarget)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                if (!event.repeat) onNode(node, event.currentTarget)
+              }}>
+              <rect width={NODE_WIDTH} height={NODE_HEIGHT} rx={10} className="index-node-box" />
+              <text x={12} y={20} className="index-node-type">{root ? '根节点 · ' : ''}{label}</text>
+              <text x={NODE_WIDTH - 12} y={20} textAnchor="end" className="index-node-page">页 {node.pageId}</text>
+              <text x={12} y={42} className="index-node-keys" clipPath="url(#index-keys-clip)">{previewKeys(node.keys)}</text>
+              <text x={NODE_WIDTH - 12} y={55} textAnchor="end" className="index-node-page">{node.keys.length} 键</text>
+            </g>
+          )
+        })}
+      </svg>
+    </div>
   )
 }
 
 function NodeModal({ node, onClose }: { node: BTreeNode; onClose: () => void }) {
   return (
-    <Modal title={`节点 · 页 ${node.pageId}（${node.kind}）`} onClose={onClose}>
-      <div className="kv" style={{ marginBottom: 12 }}>
-        <div className="item"><div className="k">Page ID</div><div className="v">{node.pageId}</div></div>
+    <Modal title={'节点 · 页 ' + node.pageId + '（' + node.kind + '）'} onClose={onClose}>
+      <div className="kv">
+        <div className="item"><div className="k">页号</div><div className="v">{node.pageId}</div></div>
         <div className="item"><div className="k">键数</div><div className="v">{node.keys.length}</div></div>
         <div className="item"><div className="k">使用率</div><div className="v">{((node.usedBytes / node.totalBytes) * 100).toFixed(0)}%</div></div>
         <div className="item"><div className="k">占用字节</div><div className="v">{node.usedBytes}/{node.totalBytes}</div></div>
       </div>
-      <h3>Keys</h3>
-      <pre className="code">{node.keys.join('  |  ')}</pre>
-      {node.rids && <><h3>行 RID</h3><pre className="code">{node.rids.join('  |  ')}</pre></>}
+      <h3>键</h3><pre className="code">{node.keys.length ? node.keys.join('  |  ') : '（空）'}</pre>
+      {node.rids && <><h3>行 RID</h3><pre className="code">{node.rids.join('  |  ') || '（空）'}</pre></>}
       {node.children && <><h3>子节点页</h3><pre className="code">{node.children.join(', ')}</pre></>}
-      {node.kind === 'LEAF' && <p className="muted" style={{ fontSize: 12.5 }}>叶链：prev={node.prev || '∅'} · next={node.next || '∅'}</p>}
+      {node.kind === 'LEAF' && <p className="index-create-note">叶链 · 前页 {node.prev || '∅'} · 后页 {node.next || '∅'}</p>}
+      <div className="modal-actions"><button className="btn" type="button" autoFocus onClick={onClose}>关闭详情</button></div>
     </Modal>
   )
 }
 
-/** Snapshot → SVG（前端只做渲染，数据来自真实内核快照） */
-function BTreeSvg({ snap, onNode }: { snap: BTreeSnapshot; onNode: (n: BTreeNode) => void }) {
-  const byId = useMemo(() => {
-    const m = new Map<number, BTreeNode>()
-    snap.nodes.forEach((n) => m.set(n.pageId, n))
-    return m
-  }, [snap])
+interface PlanRequest {
+  sql: string
+  indexRevision: number
+}
 
-  // 分层：从根 BFS
-  const levels = useMemo(() => {
-    const levels: BTreeNode[][] = []
-    let frontier = [snap.root]
-    while (frontier.length) {
-      levels.push(frontier.map((id) => byId.get(id)!).filter(Boolean))
-      const next: number[] = []
-      for (const n of frontier) {
-        const node = byId.get(n)
-        if (node?.children) next.push(...node.children)
-      }
-      if (next.length === frontier.length) break // 防御
-      frontier = next
-    }
-    return levels
-  }, [snap, byId])
+function ExecutionPlan({ indexRevision }: { indexRevision: number }) {
+  const [draft, setDraft] = useState('SELECT name FROM student WHERE id = 1;')
+  const [request, setRequest] = useState<PlanRequest | null>(null)
+  const [response, setResponse] = useState<{ request: PlanRequest; result: ReadResult<PlanResult> } | null>(null)
 
-  const maxWidth = Math.max(...levels.map((lv) => lv.length)) * (NODE_W + GAP_X) - GAP_X
-  const height = levels.length * (NODE_H + GAP_Y) - GAP_Y + 20
-  const viewBoxW = Math.min(maxWidth, 1600)
+  useEffect(() => {
+    if (!request) return
+    let current = true
+    void api.plan(request.sql).then((data) => {
+      if (current) setResponse({ request, result: { data } })
+    }, (error: unknown) => {
+      if (current) setResponse({ request, result: { error: readError(error) } })
+    })
+    return () => { current = false }
+  }, [request])
+
+  const sql = draft.trim()
+  const isCurrent = request?.sql === sql && request.indexRevision === indexRevision
+  const result = isCurrent && response?.request === request ? response.result : null
+  const pending = isCurrent && !result
+  const plan = result && 'data' in result ? result.data : null
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <svg width="100%" viewBox={`0 0 ${Math.max(maxWidth, 320)} ${height}`} style={{ minWidth: 640 }} role="img" aria-label="B+ 树结构">
-        {/* 连线：父 → 子 */}
-        {levels.slice(0, -1).map((lv, li) =>
-          lv.map((node, ni) => {
-            const childIds = node.children ?? []
-            return childIds.map((cid, ci) => {
-              const child = byId.get(cid)
-              if (!child) return null
-              const childLevel = levels[li + 1]
-              const childIdx = childLevel.findIndex((c) => c.pageId === cid)
-              if (childIdx < 0) return null
-              const x1 = levelX(lv.length, ni, viewBoxW, maxWidth) + NODE_W / 2
-              const y1 = li * (NODE_H + GAP_Y) + NODE_H
-              const x2 = levelX(childLevel.length, childIdx, viewBoxW, maxWidth) + NODE_W / 2
-              const y2 = (li + 1) * (NODE_H + GAP_Y)
-              return <line key={`${node.pageId}-${cid}`} x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--border-strong)" strokeWidth={1.4} />
-            })
-          }))}
-        {/* 叶链 prev/next 虚线 */}
-        {levels.length > 1 && levels[levels.length - 1].map((n, i, arr) => (
-          i < arr.length - 1 && n.next === arr[i + 1].pageId ? (
-            <line key={`leaf-${n.pageId}`}
-              x1={levelX(arr.length, i, viewBoxW, maxWidth) + NODE_W}
-              y1={height - NODE_H + NODE_H / 2}
-              x2={levelX(arr.length, i + 1, viewBoxW, maxWidth)}
-              y2={height - NODE_H + NODE_H / 2}
-              stroke="var(--primary)" strokeWidth={1.2} strokeDasharray="4 3" />
-          ) : null))}
-        {/* 节点 */}
-        {levels.map((lv, li) =>
-          lv.map((n, ni) => {
-            const x = levelX(lv.length, ni, viewBoxW, maxWidth)
-            const y = li * (NODE_H + GAP_Y)
-            const isRoot = n.pageId === snap.root
-            const util = n.usedBytes / n.totalBytes
-            return (
-              <g key={n.pageId} style={{ cursor: 'pointer' }} onClick={() => onNode(n)}>
-                <rect x={x} y={y} width={NODE_W} height={NODE_H} rx={8}
-                  fill={n.kind === 'LEAF' ? '#fff' : 'var(--primary-light)'}
-                  stroke={isRoot ? 'var(--primary)' : 'var(--border-strong)'}
-                  strokeWidth={isRoot ? 2.2 : 1.2} />
-                <rect x={x + 4} y={y + NODE_H - 9} width={(NODE_W - 8) * util} height={4} rx={2} fill="var(--primary)" opacity={0.55} />
-                <text x={x + 8} y={y + 15} fontSize={10} fill="var(--muted)">
-                  {n.kind === 'LEAF' ? '叶' : '内'} · 页{n.pageId} · {n.keys.length}键
-                </text>
-                <text x={x + 8} y={y + 30} fontSize={11} fontFamily="var(--mono)" fill="var(--text)">
-                  {n.keys.length === 0 ? '(空)' : trimKeys(n.keys, 12)}
-                </text>
-              </g>
-            )
-          }))}
-      </svg>
-      <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>
-        树高 {snap.height} · 节点 {snap.nodes.length} 个 · 根页 {snap.root} · 键类型 {snap.stringKeys ? 'VARCHAR' : 'INT/BIGINT'} ·
-        绿色虚线为叶链（范围扫描顺序）· 点击节点查看详情 · 使用率 = 实际字节 / 4096
-      </div>
-    </div>
+    <section className="card index-plan">
+      <header className="index-plan-head">
+        <div><h2><StudioIcon name="terminal" />执行计划</h2><p>输入 SELECT 查询，查看优化器选择的算子与层级。</p></div>
+      </header>
+      <form className="index-query" onSubmit={(event) => {
+        event.preventDefault()
+        if (sql && !pending) setRequest({ sql, indexRevision })
+      }}>
+        <label><StudioIcon name="terminal" /><input type="text" aria-label="用于查看执行计划的 SQL" value={draft}
+          onChange={(event) => setDraft(event.target.value)} /></label>
+        <button className="btn primary" type="submit" disabled={!sql || pending}><StudioIcon name="play" />查看计划</button>
+      </form>
+      {pending && <p className="index-state index-plan-state" role="status">正在生成执行计划…</p>}
+      {result && 'error' in result && <div className="index-read-error" role="alert"><ErrorBox error={result.error} /></div>}
+      {!pending && !result && (
+        <p className="index-state index-plan-state">{request ? '请重新查看当前 SQL 的执行计划。' : '提交 SELECT 查询后在这里查看执行计划。'}</p>
+      )}
+      {plan && (
+        <div className="index-plan-body">
+          <section className="index-ops" aria-label="算子树"><h3>算子树</h3><OperatorTree nodes={plan.tree} /></section>
+          <section className="index-raw" aria-label="计划原文"><h3>计划原文</h3><pre className="mono" tabIndex={0}>{plan.text}</pre></section>
+        </div>
+      )}
+    </section>
   )
 }
 
-function levelX(levelCount: number, idx: number, viewBoxW: number, maxWidth: number): number {
-  // 该层在 max(maxWidth, viewBoxW) 宽度内居中排布
-  const total = Math.max(maxWidth, 320)
-  const startX = Math.max(0, (total - levelCount * (NODE_W + GAP_X) + GAP_X) / 2)
-  return startX + idx * (NODE_W + GAP_X)
-}
-
-function trimKeys(keys: string[], maxLen: number): string {
-  const joined = keys.join(',')
-  return joined.length > maxLen ? joined.slice(0, maxLen) + '…' : joined
+function OperatorTree({ nodes }: { nodes: PlanNode[] }) {
+  return (
+    <ul>
+      {nodes.map((node, index) => (
+        <li key={node.op + '-' + index}>
+          <div className="index-op mono"><StudioIcon name="layers" /><strong>{node.op}</strong></div>
+          {!!node.children.length && <OperatorTree nodes={node.children} />}
+        </li>
+      ))}
+    </ul>
+  )
 }

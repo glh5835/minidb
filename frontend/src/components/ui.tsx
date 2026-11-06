@@ -1,90 +1,115 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import type { PlanNode } from '../types'
-import { nav } from '../router'
+import { StudioIcon } from './StudioIcon'
 import { useApp } from '../stores/app'
+
+
+const navigation = [
+  { label: '工作区', items: [
+    { path: '/start', label: '开始页', icon: 'home' },
+    { path: '/db', label: '数据浏览', icon: 'grid' },
+    { path: '/sql', label: 'SQL 工作台', icon: 'terminal' },
+    { path: '/index', label: '索引与计划', icon: 'tree' },
+  ] },
+  { label: '内核实验室', items: [
+    { path: '/lab/storage', label: '存储与缓冲池', icon: 'layers' },
+    { path: '/lab/pipeline', label: 'SQL 执行流程', icon: 'activity' },
+    { path: '/lab/txn', label: '事务与锁', icon: 'lock' },
+    { path: '/lab/recovery', label: 'WAL 与恢复', icon: 'rotate' },
+    { path: '/lab/perf', label: '性能实验', icon: 'gauge' },
+    { path: '/lab/jdbc', label: 'JDBC', icon: 'plug' },
+  ] },
+  { label: '支持', items: [
+    { path: '/help', label: '学习与帮助', icon: 'book' },
+  ] },
+] as const
+
+const featuredRoutes = ['/start', '/db', '/sql', '/index', '/lab/storage', '/lab/pipeline', '/lab/txn', '/lab/recovery']
 
 /** 全局布局：顶部状态栏 + 左侧导航 + 主工作区（计划书 §4/§5） */
 export function StudioLayout({ children, route }: { children: React.ReactNode; route: string }) {
-  const { session, connected, tables } = useApp()
+  const { ready, session, connected, tables } = useApp()
+  const [collapsed, setCollapsed] = useState(() => window.matchMedia('(max-width: 760px)').matches)
   const txn = session?.txn
+  const dbPath = session?.dbPath
+  const dbName = dbPath?.split(/[\\/]/).pop()
+  const group = navigation.find(({ items }) => items.some(({ path }) => path === route)) ?? navigation[0]
+  const current = group.items.find(({ path }) => path === route) ?? navigation[0].items[0]
+  const featured = featuredRoutes.includes(current.path)
+  const connectionLabel = ready ? connected ? '服务已连接' : '服务已断开' : '正在连接服务'
+  const toggleLabel = collapsed ? '展开侧栏' : '收起侧栏'
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <span
-          className="brand"
-          style={{ cursor: 'pointer' }}
-          onClick={() => nav('/start')}
-          title="返回开始页"
-        >
-          MiniDB Studio
-        </span>
-        <span className="stat">
-          数据库：<b>{session?.dbPath ? session.dbPath.split(/[\\/]/).pop() : '未打开'}</b>
-        </span>
-        {session?.dbPath && (
-          <span className="badge">{session.isWorkDb ? '工作库' : '实验库'}</span>
-        )}
-        <span className="stat" title={session?.dbPath ?? ''}>
-          连接：
-          <span className={`dot ${connected ? 'on' : 'off'}`} aria-hidden />
-          <b>{connected ? '已连接' : '已断开'}</b>
-        </span>
-        <span className="stat">
-          事务：
-          <span className={`dot ${txn?.active ? 'txn' : 'on'}`} aria-hidden />
-          <b>{txn?.active ? `ACTIVE · ${txn.isolation}` : '自动提交'}</b>
-        </span>
-        <span className="stat muted">
-          表：{tables.length}
-        </span>
-        <span className="spacer" />
-      </header>
-      <div className="body">
-        <nav className="sidenav">
-          <div className="group">开始</div>
-          <a className={route === '/start' ? 'active' : ''} onClick={() => nav('/start')}>
-            <span className="nav-label">开始页</span>{'🏠'}
-          </a>
-          <div className="group">数据库</div>
-          <a className={route === '/db' ? 'active' : ''} onClick={() => nav('/db')}>
-            <span className="nav-label">数据浏览</span>{'📋'}
-          </a>
-          <a className={route === '/sql' ? 'active' : ''} onClick={() => nav('/sql')}>
-            <span className="nav-label">SQL 工作台</span>{'⌨️'}
-          </a>
-          <a className={route === '/index' ? 'active' : ''} onClick={() => nav('/index')}>
-            <span className="nav-label">索引与计划</span>{'🌳'}
-          </a>
-          <div className="group">内核实验室</div>
-          <a className={route === '/lab/storage' ? 'active' : ''} onClick={() => nav('/lab/storage')}>
-            <span className="nav-label">存储与缓冲池</span>{'💾'}
-          </a>
-          <a className={route === '/lab/pipeline' ? 'active' : ''} onClick={() => nav('/lab/pipeline')}>
-            <span className="nav-label">SQL 执行流程</span>{'🔍'}
-          </a>
-          <a className={route === '/lab/txn' ? 'active' : ''} onClick={() => nav('/lab/txn')}>
-            <span className="nav-label">事务与锁</span>{'🔒'}
-          </a>
-          <a className={route === '/lab/recovery' ? 'active' : ''} onClick={() => nav('/lab/recovery')}>
-            <span className="nav-label">WAL 与恢复</span>{'⚡'}
-          </a>
-          <a className={route === '/lab/perf' ? 'active' : ''} onClick={() => nav('/lab/perf')}>
-            <span className="nav-label">性能实验</span>{'⏱️'}
-          </a>
-          <a className={route === '/lab/jdbc' ? 'active' : ''} onClick={() => nav('/lab/jdbc')}>
-            <span className="nav-label">JDBC</span>{'☕'}
-          </a>
-          <div className="group">学习与帮助</div>
-          <a className={route === '/help' ? 'active' : ''} onClick={() => nav('/help')}>
-            <span className="nav-label">学习与帮助</span>{'📖'}
-          </a>
+    <div className={collapsed ? 'app sidebar-collapsed' : 'app'}>
+      <aside className="studio-sidebar">
+        <a className="studio-brand" href="#/start" aria-label="MiniDB Studio，返回开始页" title="返回开始页">
+          <span className="studio-brand-mark"><StudioIcon name="database" /></span>
+          <span className="studio-brand-copy">
+            <strong>MiniDB Studio</strong>
+            <small>本地数据库工作台</small>
+          </span>
+        </a>
+        <nav className="sidenav" id="studio-navigation" aria-label="工作台导航">
+          {navigation.map(({ label, items }) => (
+            <div className="nav-group" key={label}>
+              <div className="nav-heading">{label}</div>
+              {items.map((item) => (
+                <a
+                  key={item.path}
+                  href={'#' + item.path}
+                  aria-current={current.path === item.path ? 'page' : undefined}
+                  aria-label={collapsed ? item.label : undefined}
+                  title={collapsed ? item.label : undefined}
+                >
+                  <span className="nav-icon"><StudioIcon name={item.icon} /></span>
+                  <span className="nav-label">{item.label}</span>
+                </a>
+              ))}
+            </div>
+          ))}
         </nav>
-        <main className={`main ${route === '/db' ? 'no-pad' : ''}`}>{children}</main>
-      </div>
+        <div className="studio-side-foot" title="MiniDB 内核 · 本地运行">
+          <StudioIcon name="chip" />
+          <span><strong>MiniDB 内核</strong><small>本地运行</small></span>
+        </div>
+      </aside>
+      <header className="topbar">
+        <div className="studio-breadcrumb">
+          <button
+            type="button" className="sidebar-toggle" aria-label={toggleLabel} title={toggleLabel}
+            aria-expanded={!collapsed} aria-controls="studio-navigation"
+            onClick={() => setCollapsed((value) => !value)}
+          >
+            <StudioIcon name="sidebar" />
+          </button>
+          <span>{group.label}</span>
+          <StudioIcon name="chevron" />
+          <strong>{current.label}</strong>
+        </div>
+        <div className="studio-status">
+          <span className="studio-status-item">
+            <span className={ready ? 'dot ' + (connected ? 'on' : 'off') : 'dot'} aria-hidden="true" />
+            {connectionLabel}
+          </span>
+          <span className="studio-status-item" title={dbPath ?? undefined}>
+            <StudioIcon name="database" />
+            <span className={dbName ? 'studio-db-name mono' : undefined}>{dbName || '数据库未打开'}</span>
+            {dbPath && <span className={session?.isWorkDb ? 'badge' : 'badge lab'}>{session?.isWorkDb ? '工作库' : '实验库'}</span>}
+            {dbPath && <span className="studio-table-count">{tables.length} 张表</span>}
+          </span>
+          {session && (
+            <span className={txn?.active ? 'studio-status-item studio-txn-active' : 'studio-status-item'}>
+              <StudioIcon name="lock" />
+              {txn?.active ? '事务进行中 · ' + txn.isolation : '自动提交'}
+            </span>
+          )}
+        </div>
+      </header>
+      <main key={route} className={featured ? 'main studio-featured' : 'main'}>{children}</main>
     </div>
   )
 }
+
 
 /** 页面状态（计划书 §37）：Loading / Empty / Success / Error / Disconnected */
 export function Loading({ text = '加载中…' }: { text?: string }) {

@@ -94,10 +94,15 @@ public final class LabService {
             else pendingA = f;
         }
 
+        boolean hasPending(String side) {
+            Future<?> operation = pending(side);
+            return operation != null && !operation.isDone();
+        }
+
         @Override
         public void close() {
             async.shutdownNow();
-            for (TxnSession t : List.of(a, b)) {
+            for (TxnSession t : new TxnSession[] {a, b}) {
                 try {
                     if (t != null && !t.finished) executor.rollback(t);
                 } catch (RuntimeException ignored) {
@@ -109,11 +114,17 @@ public final class LabService {
     private final Map<String, TxnLab> txnLabs = new ConcurrentHashMap<>();
 
     /** 重建事务实验库（account 表，两行余额）。 */
-    public Map<String, Object> txnSetup() {
-        TxnLab old = txnLabs.remove("txn");
+    public synchronized Map<String, Object> txnSetup() {
+        TxnLab old = txnLabs.get("txn");
         if (old != null) {
-            old.close();
-            registry.release(old.entry);
+            if (old.hasPending("A") || old.hasPending("B"))
+                throw new Api.ApiException("EXPERIMENT_BUSY", "请先解除会话的锁等待，再重置事务实验库。", 409);
+            txnLabs.remove("txn");
+            try {
+                old.close();
+            } finally {
+                registry.release(old.entry);
+            }
         }
         DatabaseRegistry.Entry e = resetLabFile("txn");
         TxnLab lab;
@@ -155,11 +166,13 @@ public final class LabService {
     }
 
     /** 实验步骤：BEGIN / SQL / COMMIT / ROLLBACK。锁等待场景转异步挂起。 */
-    public Map<String, Object> txnExec(Map<String, Object> body) {
+    public synchronized Map<String, Object> txnExec(Map<String, Object> body) {
         TxnLab lab = requireLab();
         String side = Json.str(body, "session", "A").toUpperCase();
         if (!side.equals("A") && !side.equals("B"))
             throw new Api.ApiException("VALIDATION_ERROR", "实验会话只能是 A 或 B: " + side);
+        if (lab.hasPending(side))
+            throw new Api.ApiException("EXPERIMENT_BUSY", "会话 " + side + " 仍有操作等待完成。", 409);
         String action = Json.str(body, "action", "SQL").toUpperCase();
         long t0 = System.nanoTime();
         try {
@@ -259,7 +272,7 @@ public final class LabService {
     }
 
     /** 轮询挂起的实验操作（锁等待图变化后取结果）。 */
-    public Map<String, Object> txnPoll() {
+    public synchronized Map<String, Object> txnPoll() {
         TxnLab lab = requireLab();
         Map<String, Object> data = new LinkedHashMap<>();
         for (String side : List.of("A", "B")) {
@@ -284,7 +297,7 @@ public final class LabService {
         return data;
     }
 
-    public Map<String, Object> txnState() {
+    public synchronized Map<String, Object> txnState() {
         TxnLab lab = requireLab();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("sessions", Map.of(
@@ -355,7 +368,7 @@ public final class LabService {
      * 实验库 → T1 提交 / T2 不提交 → 读 WAL 原文 → db.crash() 断电 →
      * 重新打开触发真实 Recovery（redo+undo，捕获报告）→ 展示 → 一致性检查。
      */
-    public Map<String, Object> recoveryRun() {
+    public synchronized Map<String, Object> recoveryRun() {
         DatabaseRegistry.Entry e = resetLabFile("recovery");
         Map<String, Object> data = new LinkedHashMap<>();
         try {

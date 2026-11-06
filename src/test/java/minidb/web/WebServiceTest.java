@@ -398,14 +398,22 @@ class WebServiceTest {
         assertTrue(report.toString().contains("REDO"), "包含 redo 阶段");
         assertTrue(report.toString().contains("UNDO"), "包含 undo 阶段");
         List<?> checks = cast(r.get("consistencyChecks"));
+        assertEquals(4, checks.size());
         for (Object c : checks)
             assertEquals(Boolean.TRUE, ((Map<?, ?>) c).get("pass"), "一致性检查通过: " + c);
+        Map<String, Object> repeated = labs.recoveryRun();
+        assertEquals(r.get("rowsAfterRecovery"), repeated.get("rowsAfterRecovery"));
+        assertEquals(checks, repeated.get("consistencyChecks"));
     }
 
     @Test
     @Order(81)
     void txnLabLockWaitAndDeadlock() throws Exception {
         assertTrue(labs.txnSetup().toString().contains("Alice"));
+        assertTrue(labs.txnSetup().toString().contains("Alice"), "A/B 未开始时可重置");
+        labs.txnExec(Map.of("session", "A", "action", "BEGIN"));
+        Map<String, Object> reset = labs.txnSetup();
+        assertFalse((Boolean) map(map(reset.get("sessions")).get("A")).get("active"), "仅 A 开始时可重置");
 
         // ---- 锁等待：A 更新 id=1 持锁 → B 更新 id=1 → 真实等待 ----
         labs.txnExec(Map.of("session", "A", "action", "BEGIN"));
@@ -419,6 +427,9 @@ class WebServiceTest {
             assertTrue(st.get("liveRows").toString().contains("111"),
                     "实时视图能看到 A 的未提交修改");
             assertTrue(st.get("locks").toString().contains("account/"), "锁键形如 account/页/槽");
+            assertEquals("EXPERIMENT_BUSY", assertThrows(Api.ApiException.class, labs::txnSetup).code);
+            assertEquals("EXPERIMENT_BUSY", assertThrows(Api.ApiException.class,
+                    () -> labs.txnExec(Map.of("session", "B", "action", "ROLLBACK"))).code);
         }
         labs.txnExec(Map.of("session", "A", "action", "COMMIT"));
         assertConverged("B");

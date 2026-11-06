@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { api, ApiFailure, storedSessionId, storeSessionId } from '../api/client'
 import type { RecentDb, SessionState, TableInfo } from '../types'
 
@@ -47,7 +47,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     actionText: string
     danger: boolean
   } | null>(null)
+  const confirmDialog = useRef<HTMLDialogElement>(null)
   const [toast, setToast] = useState<{ message: string; kind: string } | null>(null)
+
+  useEffect(() => {
+    const dialog = confirmDialog.current
+    if (dialog && !dialog.open) dialog.showModal()
+  }, [confirmState])
 
   const refresh = useCallback(async () => {
     try {
@@ -142,6 +148,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     })
   }, [])
 
+  const completeConfirm = (confirmed: boolean) => {
+    confirmDialog.current?.close()
+    confirmState?.resolve(confirmed)
+    setConfirmState(null)
+  }
+
   const notify = useCallback((message: string, kind: string = 'info') => {
     setToast({ message, kind })
     setTimeout(() => setToast(null), 3500)
@@ -155,23 +167,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     <Ctx.Provider value={value}>
       {children}
       {confirmState && (
-        <div className="modal-mask" onClick={() => { confirmState.resolve(false); setConfirmState(null) }}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={confirmState.title}>
+        <dialog
+          ref={confirmDialog} className="confirm-dialog" role="dialog" aria-label={confirmState.title}
+          onCancel={(event) => { event.preventDefault(); completeConfirm(false) }}
+          onClick={(event) => { if (event.target === event.currentTarget) completeConfirm(false) }}
+        >
+          <div className="modal">
             <h3>{confirmState.title}</h3>
             <p className="muted">{confirmState.message}</p>
             <div className="modal-actions">
-              <button className="btn" onClick={() => { confirmState.resolve(false); setConfirmState(null) }}>
+              <button className="btn" onClick={() => completeConfirm(false)}>
                 取消
               </button>
               <button
                 className={confirmState.danger ? 'btn danger' : 'btn primary'}
-                onClick={() => { confirmState.resolve(true); setConfirmState(null) }}
+                onClick={() => completeConfirm(true)}
               >
                 {confirmState.actionText}
               </button>
             </div>
           </div>
-        </div>
+        </dialog>
       )}
       {toast && <div className={`toast toast-${toast.kind}`}>{toast.message}</div>}
     </Ctx.Provider>

@@ -66,6 +66,14 @@ async function call<T>(method: string, path: string, body?: unknown, session = t
   return env.data as T
 }
 
+async function runSchemaChange(method: 'POST' | 'DELETE', path: string, fallback: string, body?: unknown) {
+  const { statements: [statement] } = await call<SqlExecResult>(method, path, body)
+  if (!statement?.success) {
+    const error = statement?.error
+    throw new ApiFailure(error?.code ?? 'SQL_EXECUTION_ERROR', error?.message ?? fallback, error?.line, error?.column)
+  }
+}
+
 // ---- 会话 ----
 export const api = {
   health: () => call<{ status: string }>('GET', '/health', undefined, false),
@@ -86,7 +94,7 @@ export const api = {
   schema: (table: string) => call<SchemaInfo>('GET', `/tables/${encodeURIComponent(table)}/schema`),
   createTable: (name: string, columns: { name: string; type: string; size?: number }[]) =>
     call<unknown>('POST', '/tables', { name, columns }),
-  dropTable: (name: string) => call<unknown>('DELETE', `/tables/${encodeURIComponent(name)}`),
+  dropTable: (name: string) => runSchemaChange('DELETE', `/tables/${encodeURIComponent(name)}`, '删除表失败。'),
 
   // 数据（RID 精确操作）
   rows: (table: string, q: { offset?: number; limit?: number; sort?: string; dir?: string;
@@ -124,8 +132,8 @@ export const api = {
   // 索引
   indexes: () => call<IndexInfo[]>('GET', '/indexes'),
   createIndex: (name: string, table: string, column: string) =>
-    call<unknown>('POST', '/indexes', { name, table, column }),
-  dropIndex: (name: string) => call<unknown>('DELETE', `/indexes/${encodeURIComponent(name)}`),
+    runSchemaChange('POST', '/indexes', '创建索引失败。', { name, table, column }),
+  dropIndex: (name: string) => runSchemaChange('DELETE', `/indexes/${encodeURIComponent(name)}`, '删除索引失败。'),
   btree: (name: string) => call<BTreeSnapshot>('GET', `/indexes/${encodeURIComponent(name)}/btree`),
 
   // 快照
